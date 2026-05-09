@@ -211,12 +211,12 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Assert that all successfully inserted messages have a sender who is a current group member
     - **Validates: Requirements 9.2**
 
-- [ ] 16. Venue polling and coordination
-  - [-] 16.1 Implement venue poll creation and voting
+- [x] 16. Venue polling and coordination
+  - [x] 16.1 Implement venue poll creation and voting
     - Create `src/features/groups/VenuePoll.tsx` that INSERTs into `venue_polls` and `venue_poll_options`
     - Implement vote action: INSERT into `venue_poll_votes` (UNIQUE constraint enforces one vote per user per poll)
     - _Requirements: 11.3, 11.4_
-  - [-] 16.2 Implement live vote count updates via Realtime
+  - [x] 16.2 Implement live vote count updates via Realtime
     - Subscribe to `group:{group_id}:poll` Broadcast channel for live vote count updates
     - Display live vote counts to all group members
     - _Requirements: 11.4_
@@ -227,37 +227,37 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Assert a second vote from the same user either replaces the previous vote or is rejected
     - **Validates: Requirements 11.3, 11.4**
 
-- [-] 17. Edge Function: `venue-suggestions` and `ai-proxy`
+- [x] 17. Edge Function: `venue-suggestions` and `ai-proxy`
   - Create `supabase/functions/venue-suggestions/index.ts`: call AI `POST /venue-recommendations` with sport, participant count, and location; return up to 5 venues or empty list on failure
   - Create `supabase/functions/ai-proxy/index.ts`: proxy AI requests with 3-second timeout; return degraded response `{ sports: [], error: "service unavailable" }` on failure
   - Implement AI health check: mark AI unavailable when `/health` returns non-200 or times out; auto-resume on recovery
   - _Requirements: 11.1, 11.2, 14.1, 14.2, 14.4_
 
-- [-] 18. Captain coordination actions
+- [x] 18. Captain coordination actions
   - Add captain-only UI controls to `ChatRoom.tsx`: confirm event button, propose venue options (calls `venue-suggestions`), finalize time and location
   - On event confirm: UPDATE `events.status = 'confirmed'`, INSERT system message "Sport match confirmed", INSERT notifications for all group members
   - On venue finalize: INSERT notification with confirmed location and start time for all group members
   - _Requirements: 8.5, 9.4, 11.5, 12.2, 12.6_
 
-- [ ] 19. Notifications — real-time delivery and inbox
-  - [~] 19.1 Implement notification Realtime subscription
+- [x] 19. Notifications — real-time delivery and inbox
+  - [x] 19.1 Implement notification Realtime subscription
     - Create `src/features/notifications/useNotifications.ts` hook subscribing to `user:{user_id}:notifications` channel (DB Changes on `notifications`)
     - Fetch unread notifications on mount; mark as read via UPDATE
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.6_
-  - [~] 19.2 Implement notification bell UI
+  - [x] 19.2 Implement notification bell UI
     - Create `src/features/notifications/NotificationBell.tsx` with unread badge count and dropdown inbox
     - Show non-blocking "AI suggestions temporarily unavailable" toast when AI features are degraded
     - _Requirements: 12.1, 14.5_
 
-- [~] 20. Edge Function: `send-reminders`
+- [x] 20. Edge Function: `send-reminders`
   - Create `supabase/functions/send-reminders/index.ts`
   - Query events where `start_time BETWEEN NOW() AND NOW() + interval '1 hour'` and status IN ('confirmed','open')
   - INSERT reminder notifications for all active participants
   - Register pg_cron schedule: every hour
   - _Requirements: 12.5_
 
-- [ ] 21. Edge Function: `reengage-users` and re-engagement notifications
-  - [~] 21.1 Implement re-engagement detection and notification dispatch
+- [x] 21. Edge Function: `reengage-users` and re-engagement notifications
+  - [x] 21.1 Implement re-engagement detection and notification dispatch
     - Create `supabase/functions/reengage-users/index.ts`
     - Query users with no availability record in the last 5 days
     - Check last re-engagement notification timestamp; skip if sent within 48 hours
@@ -265,7 +265,7 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - INSERT notification; record timestamp to enforce 48-hour rate limit
     - Register pg_cron schedule: daily
     - _Requirements: 15.1, 15.2, 15.3, 15.4_
-  - [~] 21.2 Implement 7-day suppression after availability declaration
+  - [x] 21.2 Implement 7-day suppression after availability declaration
     - In the availability upsert flow (task 6.1), after a successful "Yes" declaration, check if a re-engagement notification was sent in the last 7 days and set a suppression flag
     - The `reengage-users` function must respect this suppression flag before sending
     - _Requirements: 15.5_
@@ -277,7 +277,7 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - **Validates: Requirements 15.4, 15.5**
 
 - [ ] 22. Group membership lifecycle — leave and re-queue
-  - [~] 22.1 Implement leave group action
+  - [x] 22.1 Implement leave group action
     - Add "Leave Group" button to group view; DELETE from `group_members`
     - INSERT system message "User left the group"
     - Re-evaluate group size: if `remaining < min_size(sport)`, INSERT notifications for all remaining members offering re-queue or cancel options
@@ -291,7 +291,7 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - **Validates: Requirements 16.2, 16.3**
 
 - [ ] 23. AI degradation — end-to-end resilience wiring
-  - [~] 23.1 Implement AI health state management
+  - [x] 23.1 Implement AI health state management
     - Create `src/lib/aiHealth.ts` that polls the `ai-proxy` Edge Function's health status and exposes a React context `AIHealthContext`
     - All AI-dependent components consume `AIHealthContext` to conditionally show degraded-mode UI
     - _Requirements: 14.2, 14.4, 14.5_
@@ -302,13 +302,13 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Assert that when AI is unavailable, the response is a valid non-error response (degraded suggestions, not an error)
     - **Validates: Requirements 14.3, 4.2, 7.5, 11.2**
 
-- [~] 24. Location services — profile location and proximity
+- [x] 24. Location services — profile location and proximity
   - Implement location permission request in `ProfilePage.tsx` with privacy notice before requesting browser geolocation
   - Store coordinates in `profiles.location_lat` / `profiles.location_lng` and update the PostGIS `location` geography column
   - Allow manual city/area entry as fallback when location sharing is disabled
   - _Requirements: 13.2, 13.3, 13.4_
 
-- [~] 25. Error handling and resilience — frontend layer
+- [x] 25. Error handling and resilience — frontend layer
   - Implement global error boundary in `src/App.tsx` that catches unexpected errors and shows a descriptive message with a retry button
   - Handle Supabase 401 (redirect to login), 403 (show "You don't have permission"), and 5xx (show error with retry) uniformly via an Axios/fetch interceptor or Supabase client error handler
   - Show "Reconnecting..." indicator when Realtime connection drops

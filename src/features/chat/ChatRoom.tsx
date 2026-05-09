@@ -6,9 +6,12 @@ import { useState, useEffect, useRef } from 'react'
 import { useGroupChat, Message } from './useGroupChat'
 import { supabase } from '../../lib/supabaseClient'
 import VenuePoll from './VenuePoll'
+import { useLeaveGroup } from '../groups/useLeaveGroup'
 
 interface ChatRoomProps {
   groupId: string
+  /** Invoked after the current user successfully leaves the group. */
+  onLeave?: () => void
 }
 
 interface Profile {
@@ -49,8 +52,9 @@ const EMOJI_REACTIONS = ['👍', '❤️', '😂', '🔥', '👏'] as const
  *  12.2 - Event confirmation notifications
  *  12.6 - Venue update notifications
  */
-export default function ChatRoom({ groupId }: ChatRoomProps) {
+export default function ChatRoom({ groupId, onLeave }: ChatRoomProps) {
   const { messages, loading, error, sendMessage } = useGroupChat(groupId)
+  const { leaving, error: leaveError, leaveGroup } = useLeaveGroup()
   const [messageInput, setMessageInput] = useState('')
   const [sending, setSending] = useState(false)
   const [profiles, setProfiles] = useState<Record<string, Profile>>({})
@@ -433,6 +437,20 @@ export default function ChatRoom({ groupId }: ChatRoomProps) {
     }
   }
 
+  // Leave group action (Requirement 16.2, 16.3)
+  const handleLeaveGroup = async () => {
+    if (leaving) return
+    const confirmed = window.confirm(
+      'Leave this group? You will be removed from the chat and any matched event.',
+    )
+    if (!confirmed) return
+
+    const success = await leaveGroup(groupId)
+    if (success) {
+      onLeave?.()
+    }
+  }
+
   // Render message
   const renderMessage = (message: Message) => {
     const isSystem = message.type === 'system'
@@ -623,14 +641,46 @@ export default function ChatRoom({ groupId }: ChatRoomProps) {
           borderBottom: '1px solid #ddd',
           background: '#f8f9fa',
           borderRadius: '8px 8px 0 0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '1rem',
         }}
       >
-        <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Group Chat</h2>
-        {group && (
-          <div style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
-            {group.sport} • Status: {group.status}
-            {isCaptain && <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#007bff' }}>👑 Captain</span>}
-          </div>
+        <div style={{ minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Group Chat</h2>
+          {group && (
+            <div style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.25rem' }}>
+              {group.sport} • Status: {group.status}
+              {isCaptain && <span style={{ marginLeft: '0.5rem', fontWeight: 'bold', color: '#007bff' }}>👑 Captain</span>}
+            </div>
+          )}
+          {leaveError && (
+            <div style={{ color: '#721c24', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+              {leaveError}
+            </div>
+          )}
+        </div>
+        {currentUserId && group && group.status !== 'cancelled' && group.status !== 'completed' && (
+          <button
+            type="button"
+            onClick={handleLeaveGroup}
+            disabled={leaving}
+            title="Leave this group"
+            style={{
+              padding: '0.5rem 0.75rem',
+              background: leaving ? '#ccc' : '#dc3545',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              fontSize: '0.85rem',
+              fontWeight: 'bold',
+              cursor: leaving ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {leaving ? 'Leaving...' : '🚪 Leave Group'}
+          </button>
         )}
       </div>
 

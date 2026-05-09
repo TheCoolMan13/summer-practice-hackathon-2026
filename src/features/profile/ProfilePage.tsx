@@ -25,7 +25,18 @@ interface ProfileFormState {
   bio: string
   location_city: string
   avatar_url: string
+  location_lat: number | null
+  location_lng: number | null
 }
+
+// Geolocation permission UI state.
+// 'idle'        — user has not interacted with location sharing
+// 'notice'      — privacy notice shown, awaiting user's choice (Req 13.4)
+// 'requesting'  — browser geolocation API call in-flight
+// 'granted'     — coordinates captured and stored in form state
+// 'denied'      — user denied the request; fall back to manual city entry (Req 13.3)
+// 'error'       — geolocation is unavailable or timed out
+type GeoState = 'idle' | 'notice' | 'requesting' | 'granted' | 'denied' | 'error'
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -42,6 +53,12 @@ interface ProfileFormState {
  */
 export default function ProfilePage() {
   const [userId, setUserId] = useState<string | null>(null)
+  // Username is NOT NULL on the profiles table. We don't expose it as an
+  // editable field on this page, but we need to carry it so upserts don't
+  // fail with 400 when no profile row exists yet (new users). It's captured
+  // at registration in auth user_metadata, with the email local-part as a
+  // last-resort fallback.
+  const [username, setUsername] = useState<string>('')
 
   // Form fields
   const [form, setForm] = useState<ProfileFormState>({
@@ -49,6 +66,8 @@ export default function ProfilePage() {
     bio: '',
     location_city: '',
     avatar_url: '',
+    location_lat: null,
+    location_lng: null,
   })
 
   // Sport preferences
@@ -65,6 +84,10 @@ export default function ProfilePage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [avatarError, setAvatarError] = useState<string | null>(null)
+
+  // Location / geolocation state (Req 13.2, 13.3, 13.4)
+  const [geoState, setGeoState] = useState<GeoState>('idle')
+  const [geoError, setGeoError] = useState<string | null>(null)
 
   // ── Load data on mount ──────────────────────────────────────────────────────
 
@@ -88,14 +111,24 @@ export default function ProfilePage() {
 
         setUserId(user.id)
 
-        // Load profile and user_sports in parallel
+        // Derive a username: stored row first, then signup metadata, then
+        // email local-part. Needed because profiles.username is NOT NULL
+        // and this page is allowed to create the row on first save.
+        const metadataUsername =
+          (user.user_metadata?.username as string | undefined)?.trim() ?? ''
+        const emailLocalPart = (user.email ?? '').split('@')[0] ?? ''
+        setUsername(metadataUsername || emailLocalPart || `user_${user.id.slice(0, 8)}`)
+
+        // Load profile and user_sports in parallel.
+        // maybeSingle() returns data:null (no error) when the row doesn't
+        // exist yet — avoids the ugly HTTP 406 in the console that .single()
+        // produces for new users who haven't saved a profile yet.
         const [profileResult, sportsResult] = await Promise.all([
-          supabase.from('profiles').select('*').eq('id', user.id).single(),
+          supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
           supabase.from('user_sports').select('*').eq('user_id', user.id),
         ])
 
-        if (profileResult.error && profileResult.error.code !== 'PGRST116') {
-          // PGRST116 = row not found — acceptable for new users
+        if (profileResult.error) {
           throw profileResult.error
         }
 
@@ -105,12 +138,20 @@ export default function ProfilePage() {
 
         if (profileResult.data) {
           const p = profileResult.data
+          // Prefer the stored username over anything we derived above.
+          if (p.username) setUsername(p.username)
           setForm({
             display_name: p.display_name ?? '',
             bio: p.bio ?? '',
             location_city: p.location_city ?? '',
             avatar_url: p.avatar_url ?? '',
+            location_lat: typeof p.location_lat === 'number' ? p.location_lat : null,
+            location_lng: typeof p.location_lng === 'number' ? p.location_lng : null,
           })
+          // If coordinates were previously stored, surface that in the UI
+          if (typeof p.location_lat === 'number' && typeof p.location_lng === 'number') {
+            setGeoState('granted')
+          }
         }
 
         if (sportsResult.data) {
@@ -199,6 +240,83 @@ export default function ProfilePage() {
     })
   }, [])
 
+  // ── Geolocation handlers (Req 13.2, 13.3, 13.4) ─────────────────────────────
+
+  /**
+   * Show the privacy notice before requesting browser geolocation.
+   * The notice explains exactly how the coordinates will be used so the
+   * user can make an informed decision (Req 13.4).
+   */
+  function openLocationNotice() {
+    setGeoError(null)
+    setGeoState('notice')
+  }
+
+  function cancelLocationNotice() {
+    setGeoState((prev) => (prev === 'notice' ? 'idle' : prev))
+  }
+
+  /**
+   * Request the user's current coordinates via navigator.geolocation.
+   * Only called after the user has accepted the in-app privacy notice
+   * (Req 13.4). If the browser permission is denied or geolocation is
+   * unavailable, the user can still fall back to manual city entry
+   * (Req 13.3).
+   */
+  function requestBrowserGeolocation() {
+    setGeoError(null)
+
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setGeoState('error')
+      setGeoError('Geolocation is not supported by your browser. You can still enter a city manually below.')
+      return
+    }
+
+    setGeoState('requesting')
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords
+        setForm((prev) => ({
+          ...prev,
+          location_lat: latitude,
+          location_lng: longitude,
+        }))
+        setGeoState('granted')
+      },
+      (err) => {
+        // err.code 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
+        if (err.code === 1) {
+          setGeoState('denied')
+          setGeoError(
+            'Location permission was denied. You can still enter a city manually below for matching.',
+          )
+        } else {
+          setGeoState('error')
+          setGeoError(
+            'Unable to determine your location right now. You can still enter a city manually below.',
+          )
+        }
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10_000,
+        maximumAge: 5 * 60 * 1000, // accept a cached fix up to 5 min old
+      },
+    )
+  }
+
+  /**
+   * Clear the stored coordinates. The DB trigger (profiles_location_sync)
+   * will reset the PostGIS geography column to NULL on save, removing the
+   * user from proximity-based matching (Req 13.3).
+   */
+  function clearStoredLocation() {
+    setForm((prev) => ({ ...prev, location_lat: null, location_lng: null }))
+    setGeoState('idle')
+    setGeoError(null)
+  }
+
   // ── Save handler ────────────────────────────────────────────────────────────
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -231,14 +349,25 @@ export default function ProfilePage() {
         avatarUrl = await uploadAvatar(userId, avatarFile)
       }
 
-      // UPDATE profiles (Req 3.1, 3.2, 3.3)
+      // UPDATE profiles (Req 3.1, 3.2, 3.3, 13.2, 13.3)
+      // location_lat / location_lng are written as numeric columns; a
+      // BEFORE INSERT/UPDATE trigger (profiles_sync_location) converts
+      // them into the PostGIS `location` geography column so proximity
+      // queries (ST_DWithin) stay consistent.
+      //
+      // We include `username` on every upsert because profiles.username is
+      // NOT NULL; when this is an INSERT (new user), Postgres requires it.
+      // When it's an UPDATE, writing the existing value is a no-op.
       const { error: profileError } = await supabase.from('profiles').upsert(
         {
           id: userId,
+          username: username || `user_${userId.slice(0, 8)}`,
           display_name: form.display_name.trim(),
           bio: form.bio.trim() || null,
           avatar_url: avatarUrl || null,
           location_city: form.location_city.trim() || null,
+          location_lat: form.location_lat,
+          location_lng: form.location_lng,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'id' },
@@ -434,10 +563,117 @@ export default function ProfilePage() {
                 onConfirm={handleAISportsConfirm}
               />
             )}
+          </section>
 
-            {/* ── Location city ── */}
+          {/* ── Location (Req 13.2, 13.3, 13.4) ── */}
+          <section style={styles.section} aria-labelledby="location-heading">
+            <h2 id="location-heading" style={styles.sectionTitle}>
+              Location
+            </h2>
+
+            <p style={styles.hint}>
+              Location helps us match you with nearby players and suggest
+              relevant events. Sharing precise coordinates is optional — you
+              can enter a city manually instead.
+            </p>
+
+            {/* Current state pill */}
+            {geoState === 'granted' &&
+              form.location_lat !== null &&
+              form.location_lng !== null && (
+                <div style={styles.locationGranted} role="status">
+                  <div>
+                    <strong>Precise location on</strong>
+                    <p style={styles.coordText}>
+                      {form.location_lat.toFixed(4)}, {form.location_lng.toFixed(4)}
+                    </p>
+                  </div>
+                  <div style={styles.locationButtonRow}>
+                    <button
+                      type="button"
+                      onClick={requestBrowserGeolocation}
+                      disabled={saving}
+                      style={styles.secondaryButton}
+                    >
+                      Update
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearStoredLocation}
+                      disabled={saving}
+                      style={styles.dangerButton}
+                      aria-label="Stop sharing precise location"
+                    >
+                      Turn off
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            {/* Privacy notice shown before we call navigator.geolocation (Req 13.4) */}
+            {geoState === 'notice' && (
+              <div style={styles.privacyNotice} role="dialog" aria-labelledby="privacy-notice-heading">
+                <h3 id="privacy-notice-heading" style={styles.privacyNoticeTitle}>
+                  Privacy notice
+                </h3>
+                <ul style={styles.privacyList}>
+                  <li>Your coordinates are stored only on your profile.</li>
+                  <li>We use them to match you with players within a 10 km radius.</li>
+                  <li>Other users never see your exact coordinates — only your city.</li>
+                  <li>You can turn location off at any time from this screen.</li>
+                </ul>
+                <div style={styles.locationButtonRow}>
+                  <button
+                    type="button"
+                    onClick={requestBrowserGeolocation}
+                    disabled={saving}
+                    style={styles.primaryInlineButton}
+                  >
+                    I understand, share my location
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelLocationNotice}
+                    disabled={saving}
+                    style={styles.secondaryButton}
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Idle / denied / error: show CTA to request location */}
+            {(geoState === 'idle' ||
+              geoState === 'denied' ||
+              geoState === 'error') && (
+              <div style={styles.locationCta}>
+                <button
+                  type="button"
+                  onClick={openLocationNotice}
+                  disabled={saving}
+                  style={styles.secondaryButton}
+                >
+                  📍 Use my current location
+                </button>
+                {geoError && (
+                  <p style={styles.fieldError} role="alert">
+                    {geoError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Requesting state */}
+            {geoState === 'requesting' && (
+              <p style={styles.hint} role="status" aria-live="polite">
+                Requesting your location…
+              </p>
+            )}
+
+            {/* Manual city entry — always available as fallback (Req 13.3) */}
             <label htmlFor="location_city" style={styles.label}>
-              City
+              City or area
             </label>
             <input
               id="location_city"
@@ -451,7 +687,9 @@ export default function ProfilePage() {
               aria-describedby="location-hint"
             />
             <p id="location-hint" style={styles.hint}>
-              Optional · used for proximity matching
+              {form.location_lat === null || form.location_lng === null
+                ? 'Used for matching when precise location is off.'
+                : 'Shown on your profile to other players.'}
             </p>
           </section>
 
@@ -792,6 +1030,75 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.8rem',
     padding: '0.25rem 0.5rem',
     flexShrink: 0,
+  },
+  // ── Location section styles (Req 13.2, 13.3, 13.4) ──
+  locationCta: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.5rem',
+    margin: '0.75rem 0',
+  },
+  locationGranted: {
+    backgroundColor: '#f0fff4',
+    border: '1px solid #9ae6b4',
+    borderRadius: '8px',
+    padding: '0.75rem 1rem',
+    margin: '0.75rem 0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '1rem',
+    flexWrap: 'wrap',
+  },
+  locationButtonRow: {
+    display: 'flex',
+    gap: '0.5rem',
+    flexWrap: 'wrap',
+  },
+  coordText: {
+    color: '#276749',
+    fontSize: '0.8rem',
+    fontFamily: 'monospace',
+    margin: '0.1rem 0 0',
+  },
+  privacyNotice: {
+    backgroundColor: '#ebf8ff',
+    border: '1px solid #bee3f8',
+    borderRadius: '8px',
+    padding: '1rem',
+    margin: '0.75rem 0',
+  },
+  privacyNoticeTitle: {
+    color: '#2b6cb0',
+    fontSize: '0.95rem',
+    fontWeight: 700,
+    margin: '0 0 0.5rem',
+  },
+  privacyList: {
+    color: '#2c5282',
+    fontSize: '0.85rem',
+    margin: '0 0 0.75rem',
+    paddingLeft: '1.25rem',
+  },
+  primaryInlineButton: {
+    backgroundColor: '#3182ce',
+    border: 'none',
+    borderRadius: '6px',
+    color: '#ffffff',
+    cursor: 'pointer',
+    fontSize: '0.875rem',
+    fontWeight: 600,
+    padding: '0.5rem 0.875rem',
+  },
+  dangerButton: {
+    backgroundColor: 'transparent',
+    border: '1px solid #e53e3e',
+    borderRadius: '6px',
+    color: '#c53030',
+    cursor: 'pointer',
+    fontSize: '0.875rem',
+    fontWeight: 600,
+    padding: '0.5rem 0.875rem',
   },
   srOnly: {
     position: 'absolute',

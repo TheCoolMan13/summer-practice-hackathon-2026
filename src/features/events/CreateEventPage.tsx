@@ -236,24 +236,37 @@ export default function CreateEventPage() {
         .select()
         .single()
 
-      if (insertError) throw insertError
+      if (insertError) {
+        console.error('Event insert error:', insertError)
+        throw insertError
+      }
+
+      if (!data) {
+        throw new Error('Event was created but no data was returned.')
+      }
 
       // Add organizer as first participant
-      if (data) {
-        const { error: participantError } = await supabase
-          .from('event_participants')
-          .insert({
-            event_id: data.id,
-            user_id: userId,
-            status: 'joined',
-          })
+      const { error: participantError } = await supabase
+        .from('event_participants')
+        .insert({
+          event_id: data.id,
+          user_id: userId,
+          status: 'joined',
+        })
 
-        if (participantError) throw participantError
+      // Ignore duplicate key errors (23505) - organizer already added
+      // This can happen if the user refreshes or submits twice
+      if (participantError) {
+        console.error('Participant insert error:', participantError)
+        if (participantError.code !== '23505') {
+          throw participantError
+        }
       }
 
       // Req 10.3: Event appears in feed (redirect to feed)
       navigate('/feed')
     } catch (err: unknown) {
+      console.error('Create event error:', err)
       const message = err instanceof Error ? err.message : 'Failed to create event.'
       setErrorMessage(message)
     } finally {

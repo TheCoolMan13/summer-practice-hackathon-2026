@@ -76,7 +76,7 @@ export default function FeedPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <main style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
+    <main style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', background: 'white', minHeight: 'calc(100vh - 64px)' }}>
       <h1>Home Feed</h1>
 
       {/* Filter controls */}

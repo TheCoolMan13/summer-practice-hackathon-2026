@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
+import { useAIHealth } from '../../lib/aiHealth'
 
 // ─── Sport emoji map ──────────────────────────────────────────────────────────
 
@@ -65,6 +66,10 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
   const [degraded, setDegraded] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
 
+  // Global AI health state — lets us pre-empt the round-trip when the
+  // `ai-proxy` health probe already knows the service is down (Req 14.2, 14.5).
+  const { isDegraded: aiDegraded } = useAIHealth()
+
   const bioIsEmpty = !bio.trim()
 
   // ── Fetch suggestions ───────────────────────────────────────────────────────
@@ -75,6 +80,14 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
     setSuggestions([])
     setSelected(new Set())
     setConfirmed(false)
+
+    // Short-circuit when we already know AI is unavailable — skip the
+    // network round-trip and show the degraded UI immediately (Req 14.5).
+    if (aiDegraded) {
+      setDegraded(true)
+      setLoading(false)
+      return
+    }
 
     try {
       const { data, error } = await supabase.functions.invoke('ai-proxy', {
@@ -147,7 +160,7 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
       </div>
 
       {/* Degraded / unavailable notice — non-blocking (Req 4.2, 14.5) */}
-      {degraded && (
+      {(degraded || aiDegraded) && (
         <p style={styles.infoMessage} role="status" aria-live="polite">
           AI suggestions are temporarily unavailable. You can still add sports manually below.
         </p>
