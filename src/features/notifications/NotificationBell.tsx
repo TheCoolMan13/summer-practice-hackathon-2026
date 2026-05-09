@@ -2,112 +2,46 @@
 // Notification bell UI component
 // Requirements: 12.1, 14.5
 
-import { useState, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNotifications } from './useNotifications'
-
-// ─── Props ───────────────────────────────────────────────────────────────────
+import { colors, radii, shadows } from '../../lib/theme'
 
 export interface NotificationBellProps {
-  /** Optional callback when AI features are degraded */
   onAIDegraded?: () => void
-  /** Whether AI features are currently degraded (for showing toast) */
   aiDegraded?: boolean
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
-
-/**
- * NotificationBell
- *
- * Displays a notification bell icon with an unread badge count and a dropdown
- * inbox showing recent notifications.
- *
- * Features:
- *  - Unread badge count (Requirement 12.1)
- *  - Dropdown inbox with notification list
- *  - Mark individual notifications as read
- *  - Mark all notifications as read
- *  - Non-blocking toast when AI features are degraded (Requirement 14.5)
- *
- * The component uses a simple dropdown pattern with click-outside detection
- * to close the inbox when the user clicks elsewhere.
- */
-export default function NotificationBell({
-  onAIDegraded,
-  aiDegraded = false,
-}: NotificationBellProps) {
-  const {
-    notifications,
-    unreadCount,
-    loading,
-    error,
-    markAsRead,
-    markAllAsRead,
-  } = useNotifications()
-
+export default function NotificationBell({ onAIDegraded, aiDegraded = false }: NotificationBellProps) {
+  const { notifications, unreadCount, loading, error, markAsRead, markAllAsRead } = useNotifications()
   const [isOpen, setIsOpen] = useState(false)
   const [showAIToast, setShowAIToast] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // ── Handle AI degradation toast ──────────────────────────────────────────
   useEffect(() => {
     if (aiDegraded) {
       setShowAIToast(true)
       onAIDegraded?.()
-
-      // Auto-hide toast after 5 seconds
-      const timer = setTimeout(() => {
-        setShowAIToast(false)
-      }, 5000)
-
+      const timer = setTimeout(() => setShowAIToast(false), 5000)
       return () => clearTimeout(timer)
     }
   }, [aiDegraded, onAIDegraded])
 
-  // ── Click outside to close dropdown ──────────────────────────────────────
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false)
       }
     }
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
+    if (isOpen) document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [isOpen])
 
-  // ── Toggle dropdown ──────────────────────────────────────────────────────
-  const toggleDropdown = () => {
-    setIsOpen((prev) => !prev)
-  }
-
-  // ── Handle notification click ────────────────────────────────────────────
-  const handleNotificationClick = async (notificationId: string) => {
-    await markAsRead(notificationId)
-  }
-
-  // ── Handle mark all as read ──────────────────────────────────────────────
-  const handleMarkAllAsRead = async () => {
-    await markAllAsRead()
-  }
-
-  // ── Format timestamp ─────────────────────────────────────────────────────
   const formatTimestamp = (timestamp: string): string => {
     const date = new Date(timestamp)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
+    const diffMs = Date.now() - date.getTime()
     const diffMins = Math.floor(diffMs / 60000)
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
-
     if (diffMins < 1) return 'Just now'
     if (diffMins < 60) return `${diffMins}m ago`
     if (diffHours < 24) return `${diffHours}h ago`
@@ -116,280 +50,231 @@ export default function NotificationBell({
   }
 
   return (
-    <div className="notification-bell-container" ref={dropdownRef}>
-      {/* ── Bell icon with badge ────────────────────────────────────────── */}
+    <div ref={dropdownRef} style={{ position: 'relative' }}>
       <button
-        className="notification-bell-button"
-        onClick={toggleDropdown}
+        onClick={() => setIsOpen((v) => !v)}
         aria-label={`Notifications (${unreadCount} unread)`}
+        aria-haspopup="true"
+        aria-expanded={isOpen}
         style={{
-          position: 'relative',
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
-          padding: '8px',
-          fontSize: '24px',
+          ...styles.bellBtn,
+          ...(isOpen ? styles.bellBtnActive : {}),
         }}
       >
-        🔔
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M18 16v-5a6 6 0 0 0-4-5.66V4a2 2 0 1 0-4 0v1.34A6 6 0 0 0 6 11v5l-2 2h16l-2-2Z"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          />
+          <path
+            d="M10 20a2 2 0 0 0 4 0"
+            stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          />
+        </svg>
         {unreadCount > 0 && (
-          <span
-            className="notification-badge"
-            style={{
-              position: 'absolute',
-              top: '4px',
-              right: '4px',
-              background: '#ef4444',
-              color: 'white',
-              borderRadius: '50%',
-              width: '20px',
-              height: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '12px',
-              fontWeight: 'bold',
-            }}
-          >
+          <span style={styles.badge}>
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
 
-      {/* ── Dropdown inbox ──────────────────────────────────────────────── */}
       {isOpen && (
-        <div
-          className="notification-dropdown"
-          style={{
-            position: 'absolute',
-            top: '100%',
-            right: 0,
-            marginTop: '8px',
-            width: '360px',
-            maxHeight: '480px',
-            background: 'white',
-            border: '1px solid #e5e7eb',
-            borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-            zIndex: 1000,
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          {/* ── Header ────────────────────────────────────────────────── */}
-          <div
-            className="notification-header"
-            style={{
-              padding: '16px',
-              borderBottom: '1px solid #e5e7eb',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-            }}
-          >
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold' }}>
-              Notifications
-            </h3>
+        <div style={styles.dropdown} className="s2m-fade-in">
+          <div style={styles.header}>
+            <h3 style={styles.headerTitle}>Notifications</h3>
             {unreadCount > 0 && (
-              <button
-                onClick={handleMarkAllAsRead}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#3b82f6',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                }}
-              >
-                Mark all as read
+              <button onClick={markAllAsRead} style={styles.markAllBtn}>
+                Mark all read
               </button>
             )}
           </div>
 
-          {/* ── Notification list ──────────────────────────────────────── */}
-          <div
-            className="notification-list"
-            style={{
-              overflowY: 'auto',
-              flex: 1,
-            }}
-          >
-            {loading && (
-              <div style={{ padding: '24px', textAlign: 'center' }}>
-                Loading notifications...
-              </div>
-            )}
-
-            {error && (
-              <div
-                style={{
-                  padding: '24px',
-                  textAlign: 'center',
-                  color: '#ef4444',
-                }}
-              >
-                {error}
-              </div>
-            )}
-
+          <div style={styles.list}>
+            {loading && <div style={styles.centered}>Loading notifications…</div>}
+            {error && <div style={{ ...styles.centered, color: colors.danger[700] }}>{error}</div>}
             {!loading && !error && notifications.length === 0 && (
-              <div
-                style={{
-                  padding: '48px 24px',
-                  textAlign: 'center',
-                  color: '#6b7280',
-                }}
-              >
-                <div style={{ fontSize: '48px', marginBottom: '16px' }}>
-                  📭
-                </div>
-                <p style={{ margin: 0 }}>No notifications yet</p>
+              <div style={styles.empty}>
+                <div style={{ fontSize: 40 }}>📭</div>
+                <p style={{ margin: 0 }}>You're all caught up.</p>
               </div>
             )}
 
-            {!loading &&
-              !error &&
-              notifications.map((notification) => (
-                <div
-                  key={notification.id}
-                  className="notification-item"
-                  onClick={() => handleNotificationClick(notification.id)}
-                  style={{
-                    padding: '16px',
-                    borderBottom: '1px solid #f3f4f6',
-                    cursor: 'pointer',
-                    background: notification.read ? 'white' : '#eff6ff',
-                    transition: 'background 0.2s',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = notification.read
-                      ? '#f9fafb'
-                      : '#dbeafe'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = notification.read
-                      ? 'white'
-                      : '#eff6ff'
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'flex-start',
-                      marginBottom: '4px',
-                    }}
-                  >
-                    <h4
-                      style={{
-                        margin: 0,
-                        fontSize: '14px',
-                        fontWeight: notification.read ? 'normal' : 'bold',
-                        color: '#111827',
-                      }}
-                    >
-                      {notification.title}
-                    </h4>
-                    {!notification.read && (
-                      <span
-                        style={{
-                          width: '8px',
-                          height: '8px',
-                          borderRadius: '50%',
-                          background: '#3b82f6',
-                          flexShrink: 0,
-                          marginLeft: '8px',
-                        }}
-                      />
-                    )}
-                  </div>
-                  <p
-                    style={{
-                      margin: '4px 0',
-                      fontSize: '13px',
-                      color: '#6b7280',
-                      lineHeight: '1.4',
-                    }}
-                  >
-                    {notification.body}
-                  </p>
-                  <span
-                    style={{
-                      fontSize: '12px',
-                      color: '#9ca3af',
-                    }}
-                  >
-                    {formatTimestamp(notification.created_at)}
-                  </span>
+            {!loading && !error && notifications.map((n) => (
+              <button
+                key={n.id}
+                onClick={() => markAsRead(n.id)}
+                style={{
+                  ...styles.item,
+                  ...(n.read ? {} : styles.itemUnread),
+                }}
+              >
+                <div style={styles.itemHeader}>
+                  <h4 style={{ ...styles.itemTitle, fontWeight: n.read ? 500 : 700 }}>
+                    {n.title}
+                  </h4>
+                  {!n.read && <span style={styles.unreadDot} aria-hidden="true" />}
                 </div>
-              ))}
+                <p style={styles.itemBody}>{n.body}</p>
+                <span style={styles.itemTime}>{formatTimestamp(n.created_at)}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
 
-      {/* ── AI degradation toast ────────────────────────────────────────── */}
       {showAIToast && (
-        <div
-          className="ai-degradation-toast"
-          style={{
-            position: 'fixed',
-            bottom: '24px',
-            right: '24px',
-            background: '#fef3c7',
-            border: '1px solid #fbbf24',
-            borderRadius: '8px',
-            padding: '16px',
-            maxWidth: '360px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
-            zIndex: 2000,
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: '12px',
-          }}
-        >
-          <span style={{ fontSize: '20px' }}>⚠️</span>
+        <div style={styles.toast} role="status" className="s2m-fade-in">
+          <span style={styles.toastIcon} aria-hidden="true">✨</span>
           <div style={{ flex: 1 }}>
-            <h4
-              style={{
-                margin: '0 0 4px 0',
-                fontSize: '14px',
-                fontWeight: 'bold',
-                color: '#92400e',
-              }}
-            >
-              AI features temporarily unavailable
-            </h4>
-            <p
-              style={{
-                margin: 0,
-                fontSize: '13px',
-                color: '#78350f',
-                lineHeight: '1.4',
-              }}
-            >
-              Some features may be limited. Core functionality remains
-              available.
+            <h4 style={styles.toastTitle}>AI features temporarily unavailable</h4>
+            <p style={styles.toastBody}>
+              Core functionality still works — we'll resume suggestions automatically.
             </p>
           </div>
-          <button
-            onClick={() => setShowAIToast(false)}
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '18px',
-              color: '#92400e',
-              padding: 0,
-              lineHeight: 1,
-            }}
-            aria-label="Close"
-          >
-            ×
-          </button>
+          <button onClick={() => setShowAIToast(false)} style={styles.toastClose} aria-label="Close">×</button>
         </div>
       )}
     </div>
   )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  bellBtn: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 40, height: 40,
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: '50%',
+    color: colors.ink[700],
+    cursor: 'pointer',
+    transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+    boxShadow: shadows.xs,
+  },
+  bellBtnActive: {
+    background: colors.brand[50],
+    borderColor: colors.brand[200],
+    color: colors.brand[700],
+  },
+  badge: {
+    position: 'absolute',
+    top: -2, right: -2,
+    minWidth: 18, height: 18,
+    padding: '0 5px',
+    background: colors.danger[500],
+    color: '#fff',
+    borderRadius: 999,
+    fontSize: 10,
+    fontWeight: 700,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: `2px solid ${colors.surface}`,
+    boxShadow: shadows.sm,
+  },
+
+  dropdown: {
+    position: 'absolute',
+    top: 'calc(100% + 10px)',
+    right: 0,
+    width: 380,
+    maxHeight: 520,
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.lg,
+    boxShadow: shadows.lg,
+    zIndex: 1000,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  header: {
+    padding: '14px 18px',
+    borderBottom: `1px solid ${colors.ink[200]}`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerTitle: { margin: 0, fontSize: 15, fontWeight: 700 },
+  markAllBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: colors.brand[600],
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  list: {
+    overflowY: 'auto',
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  centered: { padding: 24, textAlign: 'center', color: colors.ink[500], fontSize: 14 },
+  empty: {
+    padding: '48px 24px',
+    textAlign: 'center',
+    color: colors.ink[500],
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 12,
+  },
+
+  item: {
+    width: '100%',
+    padding: '14px 18px',
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    borderBottom: `1px solid ${colors.ink[100]}`,
+    textAlign: 'left',
+    transition: 'background 0.15s ease',
+    display: 'block',
+  },
+  itemUnread: { background: colors.brand[50] },
+  itemHeader: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 4,
+  },
+  itemTitle: { margin: 0, fontSize: 14, color: colors.ink[900] },
+  unreadDot: {
+    width: 8, height: 8, borderRadius: '50%',
+    background: colors.brand[500],
+    flexShrink: 0, marginTop: 6,
+  },
+  itemBody: {
+    margin: '4px 0 6px',
+    fontSize: 13,
+    color: colors.ink[600],
+    lineHeight: 1.45,
+  },
+  itemTime: { fontSize: 12, color: colors.ink[400] },
+
+  toast: {
+    position: 'fixed',
+    bottom: 24, right: 24,
+    display: 'flex', alignItems: 'flex-start', gap: 12,
+    padding: '14px 16px',
+    background: colors.surface,
+    border: `1px solid ${colors.warning[300]}`,
+    borderLeft: `3px solid ${colors.warning[500]}`,
+    borderRadius: radii.md,
+    boxShadow: shadows.lg,
+    maxWidth: 360,
+    zIndex: 2000,
+  },
+  toastIcon: { fontSize: 18 },
+  toastTitle: { margin: 0, fontSize: 13, fontWeight: 700, color: colors.warning[900] },
+  toastBody: { margin: '4px 0 0', fontSize: 12, color: colors.ink[600], lineHeight: 1.5 },
+  toastClose: {
+    background: 'transparent', border: 'none',
+    color: colors.ink[500], fontSize: 18,
+    cursor: 'pointer', lineHeight: 1, padding: 0,
+  },
 }

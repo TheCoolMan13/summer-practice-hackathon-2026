@@ -1,193 +1,110 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
 import { useAIHealth } from '../../lib/aiHealth'
-
-// ─── Sport emoji map ──────────────────────────────────────────────────────────
+import { colors, radii, shadows } from '../../lib/theme'
 
 const SPORT_EMOJI: Record<string, string> = {
-  football: '⚽',
-  basketball: '🏀',
-  tennis: '🎾',
-  volleyball: '🏐',
-  swimming: '🏊',
-  cycling: '🚴',
-  running: '🏃',
-  baseball: '⚾',
-  hockey: '🏒',
-  rugby: '🏉',
-  golf: '⛳',
-  boxing: '🥊',
-  skiing: '⛷️',
-  surfing: '🏄',
-  climbing: '🧗',
-  yoga: '🧘',
-  gym: '🏋️',
-  badminton: '🏸',
-  tabletennis: '🏓',
-  handball: '🤾',
+  football: '⚽', basketball: '🏀', tennis: '🎾', volleyball: '🏐',
+  swimming: '🏊', cycling: '🚴', running: '🏃',
+  baseball: '⚾', hockey: '🏒', rugby: '🏉', golf: '⛳', boxing: '🥊',
+  skiing: '⛷️', surfing: '🏄', climbing: '🧗', yoga: '🧘', gym: '🏋️',
+  badminton: '🏸', tabletennis: '🏓', handball: '🤾',
 }
-
 function getSportLabel(sport: string): string {
   const emoji = SPORT_EMOJI[sport.toLowerCase()] ?? '🏅'
   const name = sport.charAt(0).toUpperCase() + sport.slice(1)
   return `${emoji} ${name}`
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface SportSuggestionsProps {
-  /** The authenticated user's ID (reserved for future use / logging) */
   userId: string
-  /** The bio text to send to the AI proxy */
   bio: string
-  /** Called with the confirmed list of sport names; parent handles DB writes */
   onConfirm: (sports: string[]) => void
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
-/**
- * SportSuggestions
- *
- * Calls the `ai-proxy` Edge Function with the user's bio text and displays
- * returned sport suggestions as selectable chips. The user must explicitly
- * confirm before any sports are added to their profile.
- *
- * Requirements covered:
- *  - 4.1: AI_Service returns inferred sport names within 5 seconds
- *  - 4.2: When AI is unavailable, show non-blocking message; allow manual selection
- *  - 4.3: Present suggestions as selectable options; require explicit confirmation
- *  - 4.4: (image analysis) — bio-based path; same confirmation requirement applies
- */
 export default function SportSuggestions({ userId: _userId, bio, onConfirm }: SportSuggestionsProps) {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [degraded, setDegraded] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
-
-  // Global AI health state — lets us pre-empt the round-trip when the
-  // `ai-proxy` health probe already knows the service is down (Req 14.2, 14.5).
   const { isDegraded: aiDegraded } = useAIHealth()
 
   const bioIsEmpty = !bio.trim()
 
-  // ── Fetch suggestions ───────────────────────────────────────────────────────
-
   async function handleGetSuggestions() {
-    setLoading(true)
-    setDegraded(false)
-    setSuggestions([])
-    setSelected(new Set())
-    setConfirmed(false)
-
-    // Short-circuit when we already know AI is unavailable — skip the
-    // network round-trip and show the degraded UI immediately (Req 14.5).
-    if (aiDegraded) {
-      setDegraded(true)
-      setLoading(false)
-      return
-    }
-
+    setLoading(true); setDegraded(false); setSuggestions([]); setSelected(new Set()); setConfirmed(false)
+    if (aiDegraded) { setDegraded(true); setLoading(false); return }
     try {
       const { data, error } = await supabase.functions.invoke('ai-proxy', {
         body: { action: 'extract-interests', bio },
       })
-
-      if (error) {
-        // Edge Function invocation error — treat as degraded (Req 4.2)
-        setDegraded(true)
-        return
-      }
-
-      // Degraded mode: ai-proxy returns { sports: [], error: "service unavailable" }
+      if (error) { setDegraded(true); return }
       if (data?.error === 'service unavailable' || !Array.isArray(data?.sports)) {
-        setDegraded(true)
-        return
+        setDegraded(true); return
       }
-
       const sports: string[] = data.sports.filter(
         (s: unknown) => typeof s === 'string' && s.trim().length > 0,
       )
-
-      if (sports.length === 0) {
-        // No suggestions returned — treat as degraded so user knows AI ran but found nothing
-        setDegraded(true)
-        return
-      }
-
+      if (sports.length === 0) { setDegraded(true); return }
       setSuggestions(sports)
     } catch {
-      // Network or unexpected error — non-blocking degraded mode (Req 4.2, 14.5)
       setDegraded(true)
     } finally {
       setLoading(false)
     }
   }
 
-  // ── Chip toggle ─────────────────────────────────────────────────────────────
-
   function toggleSport(sport: string) {
     setSelected((prev) => {
       const next = new Set(prev)
-      if (next.has(sport)) {
-        next.delete(sport)
-      } else {
-        next.add(sport)
-      }
+      if (next.has(sport)) next.delete(sport); else next.add(sport)
       return next
     })
   }
-
-  // ── Confirm selection ───────────────────────────────────────────────────────
 
   function handleConfirm() {
     const chosen = Array.from(selected)
     onConfirm(chosen)
     setConfirmed(true)
-    // Reset chip state after confirmation
     setSelected(new Set())
     setSuggestions([])
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
-
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <span style={styles.icon} aria-hidden="true">🤖</span>
-        <span style={styles.title}>AI Sport Suggestions</span>
+        <span style={styles.icon} aria-hidden="true">✨</span>
+        <div>
+          <div style={styles.title}>AI sport suggestions</div>
+          <div style={styles.subtitle}>Based on your bio — you confirm before anything is saved.</div>
+        </div>
       </div>
 
-      {/* Degraded / unavailable notice — non-blocking (Req 4.2, 14.5) */}
       {(degraded || aiDegraded) && (
-        <p style={styles.infoMessage} role="status" aria-live="polite">
-          AI suggestions are temporarily unavailable. You can still add sports manually below.
+        <p style={styles.infoBanner} role="status">
+          AI suggestions are temporarily unavailable. You can still add sports manually.
         </p>
       )}
 
-      {/* Confirmed notice */}
       {confirmed && !degraded && (
-        <p style={styles.successMessage} role="status" aria-live="polite">
-          Sports added to your profile!
+        <p style={styles.successBanner} role="status">
+          Added to your profile.
         </p>
       )}
 
-      {/* Get suggestions button */}
       {!loading && suggestions.length === 0 && (
-        <div style={styles.buttonRow}>
+        <div>
           <button
             type="button"
             style={{
-              ...styles.suggestButton,
-              ...(bioIsEmpty ? styles.suggestButtonDisabled : {}),
+              ...styles.primaryBtn,
+              ...(bioIsEmpty ? styles.primaryBtnDisabled : {}),
             }}
             onClick={handleGetSuggestions}
             disabled={bioIsEmpty || loading}
-            title={bioIsEmpty ? 'Add a bio to get suggestions' : undefined}
-            aria-disabled={bioIsEmpty}
           >
-            ✨ Get AI suggestions
+            ✨ Get suggestions
           </button>
           {bioIsEmpty && (
             <p style={styles.hint}>Add a bio above to enable AI suggestions.</p>
@@ -195,33 +112,26 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
         </div>
       )}
 
-      {/* Loading state */}
       {loading && (
-        <p style={styles.loadingText} aria-live="polite" aria-label="Loading AI suggestions">
-          <span aria-hidden="true">⏳</span> Analysing your bio…
+        <p style={styles.loading} role="status">
+          <span className="s2m-spin" style={styles.spinner} aria-hidden="true" />
+          Analysing your bio…
         </p>
       )}
 
-      {/* Suggestion chips (Req 4.3) */}
       {suggestions.length > 0 && (
         <div>
-          <p style={styles.chipPrompt}>
-            Select the sports you'd like to add, then confirm:
-          </p>
+          <p style={styles.chipPrompt}>Select the sports you'd like to add, then confirm:</p>
           <div style={styles.chipsRow} role="group" aria-label="Suggested sports">
             {suggestions.map((sport) => {
-              const isSelected = selected.has(sport)
+              const active = selected.has(sport)
               return (
                 <button
                   key={sport}
                   type="button"
-                  style={{
-                    ...styles.chip,
-                    ...(isSelected ? styles.chipSelected : {}),
-                  }}
                   onClick={() => toggleSport(sport)}
-                  aria-pressed={isSelected}
-                  aria-label={`${isSelected ? 'Deselect' : 'Select'} ${sport}`}
+                  aria-pressed={active}
+                  style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }}
                 >
                   {getSportLabel(sport)}
                 </button>
@@ -229,23 +139,13 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
             })}
           </div>
 
-          {/* Confirm button — only visible when at least one chip is selected (Req 4.3) */}
           {selected.size > 0 && (
-            <button
-              type="button"
-              style={styles.confirmButton}
-              onClick={handleConfirm}
-            >
-              ✓ Add {selected.size} sport{selected.size !== 1 ? 's' : ''} to profile
+            <button type="button" style={styles.confirmBtn} onClick={handleConfirm}>
+              ✓ Add {selected.size} sport{selected.size !== 1 ? 's' : ''}
             </button>
           )}
 
-          {/* Allow re-fetching */}
-          <button
-            type="button"
-            style={styles.retryLink}
-            onClick={handleGetSuggestions}
-          >
+          <button type="button" style={styles.retryLink} onClick={handleGetSuggestions}>
             Refresh suggestions
           </button>
         </div>
@@ -254,125 +154,107 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
   )
 }
 
-// ─── Inline styles ────────────────────────────────────────────────────────────
-
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    backgroundColor: '#f0f9ff',
-    border: '1px solid #bae6fd',
-    borderRadius: '8px',
-    padding: '1rem',
-    marginTop: '0.75rem',
+    background: `linear-gradient(135deg, ${colors.brand[50]} 0%, rgba(255,255,255,0.6) 100%)`,
+    border: `1px solid ${colors.brand[200]}`,
+    borderRadius: radii.md,
+    padding: 16,
   },
   header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '0.5rem',
-    marginBottom: '0.75rem',
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    marginBottom: 12,
   },
   icon: {
-    fontSize: '1.1rem',
+    fontSize: 20,
+    width: 36, height: 36, borderRadius: radii.sm,
+    background: '#fff',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    border: `1px solid ${colors.brand[200]}`,
+    flexShrink: 0,
   },
   title: {
-    fontWeight: 700,
-    fontSize: '0.9rem',
-    color: '#0369a1',
+    fontWeight: 700, fontSize: 14, color: colors.brand[900],
   },
-  infoMessage: {
-    backgroundColor: '#fff7ed',
-    border: '1px solid #fed7aa',
-    borderRadius: '6px',
-    color: '#9a3412',
-    fontSize: '0.8rem',
-    margin: '0 0 0.75rem',
-    padding: '0.5rem 0.75rem',
+  subtitle: {
+    fontSize: 12, color: colors.ink[600],
+    lineHeight: 1.4, marginTop: 2,
   },
-  successMessage: {
-    backgroundColor: '#f0fff4',
-    border: '1px solid #9ae6b4',
-    borderRadius: '6px',
-    color: '#276749',
-    fontSize: '0.8rem',
-    margin: '0 0 0.75rem',
-    padding: '0.5rem 0.75rem',
+
+  infoBanner: {
+    background: colors.warning[100],
+    border: `1px solid ${colors.warning[300]}`,
+    color: colors.warning[900],
+    fontSize: 12,
+    borderRadius: radii.sm,
+    padding: '8px 10px',
+    margin: '0 0 10px',
   },
-  buttonRow: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.25rem',
+  successBanner: {
+    background: colors.success[100],
+    border: `1px solid ${colors.success[300]}`,
+    color: colors.success[900],
+    fontSize: 12,
+    borderRadius: radii.sm,
+    padding: '8px 10px',
+    margin: '0 0 10px',
   },
-  suggestButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#0ea5e9',
-    border: 'none',
-    borderRadius: '6px',
-    color: '#ffffff',
-    cursor: 'pointer',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    padding: '0.5rem 1rem',
+
+  primaryBtn: {
+    padding: '8px 14px',
+    background: colors.brand[500], color: '#fff', border: 'none',
+    borderRadius: radii.sm, fontSize: 13, fontWeight: 600,
+    cursor: 'pointer', boxShadow: shadows.xs,
   },
-  suggestButtonDisabled: {
-    backgroundColor: '#bae6fd',
-    color: '#7dd3fc',
-    cursor: 'not-allowed',
+  primaryBtnDisabled: {
+    background: colors.brand[200], color: '#fff',
+    cursor: 'not-allowed', boxShadow: 'none',
   },
-  hint: {
-    color: '#718096',
-    fontSize: '0.78rem',
-    margin: 0,
+  hint: { color: colors.ink[500], fontSize: 12, margin: '6px 0 0' },
+
+  loading: {
+    display: 'inline-flex', alignItems: 'center', gap: 8,
+    margin: 0, fontSize: 13, color: colors.brand[700],
   },
-  loadingText: {
-    color: '#0369a1',
-    fontSize: '0.875rem',
-    margin: 0,
+  spinner: {
+    width: 14, height: 14, borderRadius: '50%',
+    border: `2px solid ${colors.brand[200]}`, borderTopColor: colors.brand[500],
+    display: 'inline-block',
   },
-  chipPrompt: {
-    color: '#374151',
-    fontSize: '0.8rem',
-    margin: '0 0 0.5rem',
-  },
+
+  chipPrompt: { color: colors.ink[700], fontSize: 13, margin: '0 0 8px' },
   chipsRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.5rem',
-    marginBottom: '0.75rem',
+    display: 'flex', flexWrap: 'wrap', gap: 6,
+    marginBottom: 10,
   },
   chip: {
-    backgroundColor: '#e0f2fe',
-    border: '1.5px solid #7dd3fc',
-    borderRadius: '999px',
-    color: '#0369a1',
+    padding: '6px 12px',
+    background: '#fff',
+    border: `1px solid ${colors.brand[200]}`,
+    borderRadius: 999,
+    color: colors.brand[700],
+    fontSize: 13, fontWeight: 500,
     cursor: 'pointer',
-    fontSize: '0.85rem',
-    fontWeight: 500,
-    padding: '0.35rem 0.85rem',
-    transition: 'background-color 0.1s, border-color 0.1s',
+    transition: 'all 0.15s ease',
   },
-  chipSelected: {
-    backgroundColor: '#0ea5e9',
-    borderColor: '#0284c7',
-    color: '#ffffff',
+  chipActive: {
+    background: colors.brand[500],
+    borderColor: colors.brand[500],
+    color: '#fff',
   },
-  confirmButton: {
-    backgroundColor: '#16a34a',
-    border: 'none',
-    borderRadius: '6px',
-    color: '#ffffff',
-    cursor: 'pointer',
-    display: 'block',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    marginBottom: '0.5rem',
-    padding: '0.5rem 1rem',
+
+  confirmBtn: {
+    padding: '8px 14px',
+    background: colors.success[500], color: '#fff', border: 'none',
+    borderRadius: radii.sm, fontSize: 13, fontWeight: 600,
+    cursor: 'pointer', boxShadow: shadows.xs,
+    marginRight: 8,
   },
   retryLink: {
-    background: 'none',
-    border: 'none',
-    color: '#0369a1',
-    cursor: 'pointer',
-    fontSize: '0.78rem',
+    background: 'none', border: 'none',
+    color: colors.brand[700],
+    fontSize: 12, fontWeight: 600,
+    cursor: 'pointer', textDecoration: 'underline',
     padding: 0,
-    textDecoration: 'underline',
   },
 }

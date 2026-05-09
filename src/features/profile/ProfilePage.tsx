@@ -2,24 +2,15 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from
 import { supabase } from '../../lib/supabaseClient'
 import { uploadAvatar } from '../../lib/storage'
 import SportSuggestions from './SportSuggestions'
-
-// ─── Constants ────────────────────────────────────────────────────────────────
+import { colors, gradients, radii, shadows, themeForSport } from '../../lib/theme'
 
 const SPORTS = ['football', 'basketball', 'tennis', 'volleyball'] as const
 type Sport = (typeof SPORTS)[number]
-
 const SKILL_LEVELS = ['beginner', 'intermediate', 'advanced'] as const
 type SkillLevel = (typeof SKILL_LEVELS)[number]
-
 const BIO_MAX = 280
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface UserSport {
-  sport: Sport
-  skill_level: SkillLevel
-}
-
+interface UserSport { sport: Sport; skill_level: SkillLevel }
 interface ProfileFormState {
   display_name: string
   bio: string
@@ -28,1087 +19,644 @@ interface ProfileFormState {
   location_lat: number | null
   location_lng: number | null
 }
-
-// Geolocation permission UI state.
-// 'idle'        — user has not interacted with location sharing
-// 'notice'      — privacy notice shown, awaiting user's choice (Req 13.4)
-// 'requesting'  — browser geolocation API call in-flight
-// 'granted'     — coordinates captured and stored in form state
-// 'denied'      — user denied the request; fall back to manual city entry (Req 13.3)
-// 'error'       — geolocation is unavailable or timed out
 type GeoState = 'idle' | 'notice' | 'requesting' | 'granted' | 'denied' | 'error'
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
-/**
- * ProfilePage
- *
- * Allows authenticated users to view and edit their profile.
- *
- * Requirements covered:
- *  - 3.1: Display name + at least one sport required to save
- *  - 3.2: Optional bio (max 280 chars), avatar URL, skill levels, location city
- *  - 3.3: Profile update completes within 2 seconds under normal load
- *  - 3.5: Avatar upload accepts JPEG/PNG up to 5 MB (delegated to uploadAvatar helper)
- */
 export default function ProfilePage() {
   const [userId, setUserId] = useState<string | null>(null)
-  // Username is NOT NULL on the profiles table. We don't expose it as an
-  // editable field on this page, but we need to carry it so upserts don't
-  // fail with 400 when no profile row exists yet (new users). It's captured
-  // at registration in auth user_metadata, with the email local-part as a
-  // last-resort fallback.
   const [username, setUsername] = useState<string>('')
-
-  // Form fields
   const [form, setForm] = useState<ProfileFormState>({
-    display_name: '',
-    bio: '',
-    location_city: '',
-    avatar_url: '',
-    location_lat: null,
-    location_lng: null,
+    display_name: '', bio: '', location_city: '',
+    avatar_url: '', location_lat: null, location_lng: null,
   })
-
-  // Sport preferences
   const [userSports, setUserSports] = useState<UserSport[]>([])
-
-  // Avatar file selection (not yet uploaded)
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // UI state
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [avatarError, setAvatarError] = useState<string | null>(null)
-
-  // Location / geolocation state (Req 13.2, 13.3, 13.4)
   const [geoState, setGeoState] = useState<GeoState>('idle')
   const [geoError, setGeoError] = useState<string | null>(null)
 
-  // ── Load data on mount ──────────────────────────────────────────────────────
-
   useEffect(() => {
     async function loadProfile() {
-      setLoading(true)
-      setErrorMessage(null)
-
+      setLoading(true); setErrorMessage(null)
       try {
-        // Get current authenticated user (Req 3.1)
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser()
-
+        const { data: { user }, error: userError } = await supabase.auth.getUser()
         if (userError || !user) {
           setErrorMessage('Unable to load user session. Please log in again.')
-          setLoading(false)
-          return
+          setLoading(false); return
         }
-
         setUserId(user.id)
-
-        // Derive a username: stored row first, then signup metadata, then
-        // email local-part. Needed because profiles.username is NOT NULL
-        // and this page is allowed to create the row on first save.
-        const metadataUsername =
-          (user.user_metadata?.username as string | undefined)?.trim() ?? ''
+        const metaUsername = (user.user_metadata?.username as string | undefined)?.trim() ?? ''
         const emailLocalPart = (user.email ?? '').split('@')[0] ?? ''
-        setUsername(metadataUsername || emailLocalPart || `user_${user.id.slice(0, 8)}`)
-
-        // Load profile and user_sports in parallel.
-        // maybeSingle() returns data:null (no error) when the row doesn't
-        // exist yet — avoids the ugly HTTP 406 in the console that .single()
-        // produces for new users who haven't saved a profile yet.
+        setUsername(metaUsername || emailLocalPart || `user_${user.id.slice(0, 8)}`)
         const [profileResult, sportsResult] = await Promise.all([
           supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
           supabase.from('user_sports').select('*').eq('user_id', user.id),
         ])
-
-        if (profileResult.error) {
-          throw profileResult.error
-        }
-
-        if (sportsResult.error) {
-          throw sportsResult.error
-        }
-
+        if (profileResult.error) throw profileResult.error
+        if (sportsResult.error) throw sportsResult.error
         if (profileResult.data) {
           const p = profileResult.data
-          // Prefer the stored username over anything we derived above.
           if (p.username) setUsername(p.username)
           setForm({
-            display_name: p.display_name ?? '',
-            bio: p.bio ?? '',
-            location_city: p.location_city ?? '',
-            avatar_url: p.avatar_url ?? '',
+            display_name: p.display_name ?? '', bio: p.bio ?? '',
+            location_city: p.location_city ?? '', avatar_url: p.avatar_url ?? '',
             location_lat: typeof p.location_lat === 'number' ? p.location_lat : null,
             location_lng: typeof p.location_lng === 'number' ? p.location_lng : null,
           })
-          // If coordinates were previously stored, surface that in the UI
           if (typeof p.location_lat === 'number' && typeof p.location_lng === 'number') {
             setGeoState('granted')
           }
         }
-
         if (sportsResult.data) {
-          setUserSports(
-            sportsResult.data.map((s: { sport: Sport; skill_level: SkillLevel }) => ({
-              sport: s.sport,
-              skill_level: s.skill_level,
-            })),
-          )
+          setUserSports(sportsResult.data.map((s: { sport: Sport; skill_level: SkillLevel }) => ({
+            sport: s.sport, skill_level: s.skill_level,
+          })))
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Failed to load profile.'
-        setErrorMessage(message)
-      } finally {
-        setLoading(false)
-      }
+        setErrorMessage(err instanceof Error ? err.message : 'Failed to load profile.')
+      } finally { setLoading(false) }
     }
-
     loadProfile()
   }, [])
 
-  // ── Form field handlers ─────────────────────────────────────────────────────
-
-  function handleFieldChange(
-    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) {
+  function handleFieldChange(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     const { name, value } = e.target
     setForm((prev) => ({ ...prev, [name]: value }))
   }
-
-  // ── Avatar handlers ─────────────────────────────────────────────────────────
 
   function handleAvatarChange(e: ChangeEvent<HTMLInputElement>) {
     setAvatarError(null)
     const file = e.target.files?.[0]
     if (!file) return
-
-    // Client-side validation (mirrors uploadAvatar helper — Req 3.5)
     if (!['image/jpeg', 'image/png'].includes(file.type)) {
-      setAvatarError('Only JPEG and PNG files are supported.')
-      return
+      setAvatarError('Only JPEG and PNG files are supported.'); return
     }
     if (file.size > 5 * 1024 * 1024) {
-      setAvatarError('File size must not exceed 5 MB.')
-      return
+      setAvatarError('File size must not exceed 5 MB.'); return
     }
-
     setAvatarFile(file)
     setAvatarPreview(URL.createObjectURL(file))
   }
-
-  // ── Sport preference handlers ───────────────────────────────────────────────
 
   function addSport(sport: Sport) {
     if (userSports.some((s) => s.sport === sport)) return
     setUserSports((prev) => [...prev, { sport, skill_level: 'beginner' }])
   }
-
   function removeSport(sport: Sport) {
     setUserSports((prev) => prev.filter((s) => s.sport !== sport))
   }
-
   function updateSkillLevel(sport: Sport, skill_level: SkillLevel) {
-    setUserSports((prev) =>
-      prev.map((s) => (s.sport === sport ? { ...s, skill_level } : s)),
-    )
+    setUserSports((prev) => prev.map((s) => s.sport === sport ? { ...s, skill_level } : s))
   }
 
-  /**
-   * handleAISportsConfirm
-   *
-   * Called by SportSuggestions after the user explicitly confirms AI-suggested
-   * sports. Merges the confirmed sports into the existing userSports state
-   * WITHOUT overwriting manually set sports (Req 3.4).
-   *
-   * Sports that are already in userSports are skipped; new ones are added with
-   * a default skill level of 'beginner'.
-   */
   const handleAISportsConfirm = useCallback((confirmedSports: string[]) => {
     setUserSports((prev) => {
-      const existingSports = new Set(prev.map((s) => s.sport))
-      const newSports = confirmedSports
-        .filter((s) => !existingSports.has(s as Sport) && (SPORTS as readonly string[]).includes(s))
+      const existing = new Set(prev.map((s) => s.sport))
+      const next = confirmedSports
+        .filter((s) => !existing.has(s as Sport) && (SPORTS as readonly string[]).includes(s))
         .map((s) => ({ sport: s as Sport, skill_level: 'beginner' as SkillLevel }))
-      return [...prev, ...newSports]
+      return [...prev, ...next]
     })
   }, [])
 
-  // ── Geolocation handlers (Req 13.2, 13.3, 13.4) ─────────────────────────────
-
-  /**
-   * Show the privacy notice before requesting browser geolocation.
-   * The notice explains exactly how the coordinates will be used so the
-   * user can make an informed decision (Req 13.4).
-   */
-  function openLocationNotice() {
-    setGeoError(null)
-    setGeoState('notice')
-  }
-
-  function cancelLocationNotice() {
-    setGeoState((prev) => (prev === 'notice' ? 'idle' : prev))
-  }
-
-  /**
-   * Request the user's current coordinates via navigator.geolocation.
-   * Only called after the user has accepted the in-app privacy notice
-   * (Req 13.4). If the browser permission is denied or geolocation is
-   * unavailable, the user can still fall back to manual city entry
-   * (Req 13.3).
-   */
+  function openLocationNotice() { setGeoError(null); setGeoState('notice') }
+  function cancelLocationNotice() { setGeoState((prev) => (prev === 'notice' ? 'idle' : prev)) }
   function requestBrowserGeolocation() {
     setGeoError(null)
-
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setGeoState('error')
-      setGeoError('Geolocation is not supported by your browser. You can still enter a city manually below.')
-      return
+      setGeoState('error'); setGeoError('Geolocation is not supported by your browser.'); return
     }
-
     setGeoState('requesting')
-
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords
-        setForm((prev) => ({
-          ...prev,
-          location_lat: latitude,
-          location_lng: longitude,
-        }))
+        setForm((prev) => ({ ...prev, location_lat: latitude, location_lng: longitude }))
         setGeoState('granted')
       },
       (err) => {
-        // err.code 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
         if (err.code === 1) {
           setGeoState('denied')
-          setGeoError(
-            'Location permission was denied. You can still enter a city manually below for matching.',
-          )
+          setGeoError('Location permission denied. You can still enter a city manually.')
         } else {
           setGeoState('error')
-          setGeoError(
-            'Unable to determine your location right now. You can still enter a city manually below.',
-          )
+          setGeoError('Unable to determine your location right now.')
         }
       },
-      {
-        enableHighAccuracy: false,
-        timeout: 10_000,
-        maximumAge: 5 * 60 * 1000, // accept a cached fix up to 5 min old
-      },
+      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 5 * 60 * 1000 },
     )
   }
-
-  /**
-   * Clear the stored coordinates. The DB trigger (profiles_location_sync)
-   * will reset the PostGIS geography column to NULL on save, removing the
-   * user from proximity-based matching (Req 13.3).
-   */
   function clearStoredLocation() {
     setForm((prev) => ({ ...prev, location_lat: null, location_lng: null }))
-    setGeoState('idle')
-    setGeoError(null)
+    setGeoState('idle'); setGeoError(null)
   }
 
-  // ── Save handler ────────────────────────────────────────────────────────────
-
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setSuccessMessage(null)
-    setErrorMessage(null)
-
-    // Req 3.1: display name + at least one sport required
-    if (!form.display_name.trim()) {
-      setErrorMessage('Display name is required.')
-      return
-    }
-    if (userSports.length === 0) {
-      setErrorMessage('Please add at least one sport preference.')
-      return
-    }
-
-    if (!userId) {
-      setErrorMessage('User session not found. Please log in again.')
-      return
-    }
-
+    e.preventDefault(); setSuccessMessage(null); setErrorMessage(null)
+    if (!form.display_name.trim()) return setErrorMessage('Display name is required.')
+    if (userSports.length === 0) return setErrorMessage('Please add at least one sport preference.')
+    if (!userId) return setErrorMessage('User session not found. Please log in again.')
     setSaving(true)
-
     try {
       let avatarUrl = form.avatar_url
-
-      // Upload avatar if a new file was selected (Req 3.5)
-      if (avatarFile) {
-        avatarUrl = await uploadAvatar(userId, avatarFile)
-      }
-
-      // UPDATE profiles (Req 3.1, 3.2, 3.3, 13.2, 13.3)
-      // location_lat / location_lng are written as numeric columns; a
-      // BEFORE INSERT/UPDATE trigger (profiles_sync_location) converts
-      // them into the PostGIS `location` geography column so proximity
-      // queries (ST_DWithin) stay consistent.
-      //
-      // We include `username` on every upsert because profiles.username is
-      // NOT NULL; when this is an INSERT (new user), Postgres requires it.
-      // When it's an UPDATE, writing the existing value is a no-op.
-      const { error: profileError } = await supabase.from('profiles').upsert(
-        {
-          id: userId,
-          username: username || `user_${userId.slice(0, 8)}`,
-          display_name: form.display_name.trim(),
-          bio: form.bio.trim() || null,
-          avatar_url: avatarUrl || null,
-          location_city: form.location_city.trim() || null,
-          location_lat: form.location_lat,
-          location_lng: form.location_lng,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'id' },
-      )
-
+      if (avatarFile) avatarUrl = await uploadAvatar(userId, avatarFile)
+      const { error: profileError } = await supabase.from('profiles').upsert({
+        id: userId,
+        username: username || `user_${userId.slice(0, 8)}`,
+        display_name: form.display_name.trim(),
+        bio: form.bio.trim() || null,
+        avatar_url: avatarUrl || null,
+        location_city: form.location_city.trim() || null,
+        location_lat: form.location_lat,
+        location_lng: form.location_lng,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' })
       if (profileError) throw profileError
-
-      // UPSERT user_sports for each selected sport
       if (userSports.length > 0) {
-        const { error: upsertError } = await supabase.from('user_sports').upsert(
-          userSports.map((s) => ({
-            user_id: userId,
-            sport: s.sport,
-            skill_level: s.skill_level,
-          })),
+        const { error } = await supabase.from('user_sports').upsert(
+          userSports.map((s) => ({ user_id: userId, sport: s.sport, skill_level: s.skill_level })),
           { onConflict: 'user_id,sport' },
         )
-        if (upsertError) throw upsertError
+        if (error) throw error
       }
-
-      // DELETE user_sports for removed sports
-      const selectedSports = userSports.map((s) => s.sport)
-      const removedSports = SPORTS.filter((s) => !selectedSports.includes(s))
-      if (removedSports.length > 0) {
-        const { error: deleteError } = await supabase
-          .from('user_sports')
-          .delete()
-          .eq('user_id', userId)
-          .in('sport', removedSports)
-        if (deleteError) throw deleteError
+      const selected = userSports.map((s) => s.sport)
+      const removed = SPORTS.filter((s) => !selected.includes(s))
+      if (removed.length > 0) {
+        const { error } = await supabase.from('user_sports')
+          .delete().eq('user_id', userId).in('sport', removed)
+        if (error) throw error
       }
-
-      // Update local avatar URL state after successful upload
       if (avatarFile) {
         setForm((prev) => ({ ...prev, avatar_url: avatarUrl }))
         setAvatarFile(null)
       }
-
-      setSuccessMessage('Profile saved successfully!')
+      setSuccessMessage('Profile saved.')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to save profile.'
-      setErrorMessage(message)
-    } finally {
-      setSaving(false)
-    }
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to save profile.')
+    } finally { setSaving(false) }
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  if (loading) return <div style={styles.loading}>Loading profile…</div>
 
-  if (loading) {
-    return (
-      <div style={styles.loadingContainer} aria-live="polite" aria-label="Loading profile">
-        Loading profile…
-      </div>
-    )
-  }
-
-  const availableSportsToAdd = SPORTS.filter(
-    (s) => !userSports.some((us) => us.sport === s),
-  )
-
+  const availableToAdd = SPORTS.filter((s) => !userSports.some((us) => us.sport === s))
   const displayAvatar = avatarPreview ?? (form.avatar_url || null)
+  const firstInitial = (form.display_name || username || 'You').slice(0, 1).toUpperCase()
 
   return (
-    <main style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>Edit Profile</h1>
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <div style={styles.avatarBlock}>
+          {displayAvatar ? (
+            <img src={displayAvatar} alt="Profile avatar" style={styles.avatar} />
+          ) : (
+            <div style={styles.avatarFallback} aria-hidden="true">{firstInitial}</div>
+          )}
+          <button
+            type="button"
+            style={styles.avatarEdit}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Upload new avatar"
+          >
+            ✎
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png"
+            style={{ display: 'none' }}
+            onChange={handleAvatarChange}
+          />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <span style={styles.eyebrow}>Your profile</span>
+          <h1 style={styles.title}>
+            {form.display_name || 'New player'}
+          </h1>
+          <p style={styles.username}>@{username}</p>
+          {avatarError && <p style={styles.inlineError}>{avatarError}</p>}
+        </div>
+      </header>
 
-        {/* Success message */}
-        {successMessage && (
-          <p style={styles.successMessage} role="status" aria-live="polite">
-            {successMessage}
-          </p>
-        )}
+      {successMessage && <div style={styles.alertSuccess} role="status">{successMessage}</div>}
+      {errorMessage && (
+        <div style={styles.alertError} role="alert">
+          <span>{errorMessage}</span>
+          <button type="button" onClick={() => setErrorMessage(null)} style={styles.dismissBtn}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
-        {/* Error message with retry */}
-        {errorMessage && (
-          <div style={styles.errorBox} role="alert">
-            <p style={styles.errorText}>{errorMessage}</p>
-            <button
-              type="button"
-              style={styles.retryButton}
-              onClick={() => {
-                setErrorMessage(null)
-                setSuccessMessage(null)
-              }}
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
+      <form onSubmit={handleSubmit} noValidate style={styles.form}>
+        {/* Basic info */}
+        <section style={styles.card}>
+          <h2 style={styles.cardTitle}>Basic info</h2>
+          <label htmlFor="display_name" style={styles.label}>
+            Display name <span style={styles.required}>*</span>
+          </label>
+          <input
+            id="display_name" name="display_name" type="text" required
+            value={form.display_name} onChange={handleFieldChange}
+            disabled={saving} placeholder="Your name"
+          />
+          <label htmlFor="bio" style={{ ...styles.label, marginTop: 16 }}>
+            Bio{' '}
+            <span style={styles.charCount}>{form.bio.length}/{BIO_MAX}</span>
+          </label>
+          <textarea
+            id="bio" name="bio" rows={4} maxLength={BIO_MAX}
+            value={form.bio}
+            onChange={(e) => {
+              if (e.target.value.length <= BIO_MAX) handleFieldChange(e)
+            }}
+            disabled={saving}
+            placeholder="Tell others about yourself and your sports interests…"
+          />
+          <p style={styles.hint}>Optional · max {BIO_MAX} characters</p>
 
-        <form onSubmit={handleSubmit} noValidate style={styles.form}>
-          {/* ── Avatar ── */}
-          <section style={styles.section} aria-labelledby="avatar-heading">
-            <h2 id="avatar-heading" style={styles.sectionTitle}>
-              Profile Picture
-            </h2>
-
-            <div style={styles.avatarRow}>
-              {displayAvatar ? (
-                <img
-                  src={displayAvatar}
-                  alt="Profile avatar"
-                  style={styles.avatarPreview}
-                />
-              ) : (
-                <div style={styles.avatarPlaceholder} aria-hidden="true">
-                  👤
-                </div>
-              )}
-
-              <div style={styles.avatarControls}>
-                <button
-                  type="button"
-                  style={styles.secondaryButton}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  {displayAvatar ? 'Change photo' : 'Upload photo'}
-                </button>
-                <p style={styles.hint}>JPEG or PNG, max 5 MB</p>
-                {avatarError && (
-                  <p style={styles.fieldError} role="alert">
-                    {avatarError}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Hidden file input */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png"
-              style={{ display: 'none' }}
-              aria-label="Upload profile picture"
-              onChange={handleAvatarChange}
-            />
-          </section>
-
-          {/* ── Display name ── */}
-          <section style={styles.section} aria-labelledby="basic-heading">
-            <h2 id="basic-heading" style={styles.sectionTitle}>
-              Basic Info
-            </h2>
-
-            <label htmlFor="display_name" style={styles.label}>
-              Display name <span style={styles.required}>*</span>
-            </label>
-            <input
-              id="display_name"
-              name="display_name"
-              type="text"
-              required
-              value={form.display_name}
-              onChange={handleFieldChange}
-              disabled={saving}
-              style={styles.input}
-              placeholder="Your name"
-              aria-required="true"
-            />
-
-            {/* ── Bio ── */}
-            <label htmlFor="bio" style={styles.label}>
-              Bio{' '}
-              <span style={styles.charCount}>
-                {form.bio.length}/{BIO_MAX}
-              </span>
-            </label>
-            <textarea
-              id="bio"
-              name="bio"
-              value={form.bio}
-              onChange={(e) => {
-                if (e.target.value.length <= BIO_MAX) handleFieldChange(e)
-              }}
-              disabled={saving}
-              style={styles.textarea}
-              placeholder="Tell others about yourself and your sports interests…"
-              maxLength={BIO_MAX}
-              rows={4}
-              aria-describedby="bio-hint"
-            />
-            <p id="bio-hint" style={styles.hint}>
-              Optional · max {BIO_MAX} characters
-            </p>
-
-            {/* ── AI sport suggestions (Req 4.1–4.3) ── */}
-            {userId && (
+          {userId && (
+            <div style={{ marginTop: 16 }}>
               <SportSuggestions
                 userId={userId}
                 bio={form.bio}
                 onConfirm={handleAISportsConfirm}
               />
-            )}
-          </section>
+            </div>
+          )}
+        </section>
 
-          {/* ── Location (Req 13.2, 13.3, 13.4) ── */}
-          <section style={styles.section} aria-labelledby="location-heading">
-            <h2 id="location-heading" style={styles.sectionTitle}>
-              Location
-            </h2>
+        {/* Location */}
+        <section style={styles.card}>
+          <h2 style={styles.cardTitle}>Location</h2>
+          <p style={styles.hint}>
+            We match you with players nearby. Sharing precise coordinates is optional.
+          </p>
 
-            <p style={styles.hint}>
-              Location helps us match you with nearby players and suggest
-              relevant events. Sharing precise coordinates is optional — you
-              can enter a city manually instead.
-            </p>
-
-            {/* Current state pill */}
-            {geoState === 'granted' &&
-              form.location_lat !== null &&
-              form.location_lng !== null && (
-                <div style={styles.locationGranted} role="status">
-                  <div>
-                    <strong>Precise location on</strong>
-                    <p style={styles.coordText}>
-                      {form.location_lat.toFixed(4)}, {form.location_lng.toFixed(4)}
-                    </p>
-                  </div>
-                  <div style={styles.locationButtonRow}>
-                    <button
-                      type="button"
-                      onClick={requestBrowserGeolocation}
-                      disabled={saving}
-                      style={styles.secondaryButton}
-                    >
-                      Update
-                    </button>
-                    <button
-                      type="button"
-                      onClick={clearStoredLocation}
-                      disabled={saving}
-                      style={styles.dangerButton}
-                      aria-label="Stop sharing precise location"
-                    >
-                      Turn off
-                    </button>
-                  </div>
-                </div>
-              )}
-
-            {/* Privacy notice shown before we call navigator.geolocation (Req 13.4) */}
-            {geoState === 'notice' && (
-              <div style={styles.privacyNotice} role="dialog" aria-labelledby="privacy-notice-heading">
-                <h3 id="privacy-notice-heading" style={styles.privacyNoticeTitle}>
-                  Privacy notice
-                </h3>
-                <ul style={styles.privacyList}>
-                  <li>Your coordinates are stored only on your profile.</li>
-                  <li>We use them to match you with players within a 10 km radius.</li>
-                  <li>Other users never see your exact coordinates — only your city.</li>
-                  <li>You can turn location off at any time from this screen.</li>
-                </ul>
-                <div style={styles.locationButtonRow}>
-                  <button
-                    type="button"
-                    onClick={requestBrowserGeolocation}
-                    disabled={saving}
-                    style={styles.primaryInlineButton}
-                  >
-                    I understand, share my location
-                  </button>
-                  <button
-                    type="button"
-                    onClick={cancelLocationNotice}
-                    disabled={saving}
-                    style={styles.secondaryButton}
-                  >
-                    Not now
-                  </button>
-                </div>
+          {geoState === 'granted' && form.location_lat !== null && form.location_lng !== null && (
+            <div style={styles.locationPanel} role="status">
+              <div style={styles.locationOn}>
+                <span style={styles.locationDot} className="s2m-pulse" />
+                <strong>Precise location is on</strong>
               </div>
-            )}
+              <p style={styles.locationCoords}>
+                {form.location_lat.toFixed(4)}, {form.location_lng.toFixed(4)}
+              </p>
+              <div style={styles.locationActions}>
+                <button type="button" onClick={requestBrowserGeolocation} disabled={saving}
+                        style={styles.secondaryBtn}>Update</button>
+                <button type="button" onClick={clearStoredLocation} disabled={saving}
+                        style={styles.dangerBtn}>Turn off</button>
+              </div>
+            </div>
+          )}
 
-            {/* Idle / denied / error: show CTA to request location */}
-            {(geoState === 'idle' ||
-              geoState === 'denied' ||
-              geoState === 'error') && (
-              <div style={styles.locationCta}>
-                <button
-                  type="button"
-                  onClick={openLocationNotice}
-                  disabled={saving}
-                  style={styles.secondaryButton}
-                >
-                  📍 Use my current location
+          {geoState === 'notice' && (
+            <div style={styles.privacyCard} role="dialog">
+              <h3 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700 }}>Privacy notice</h3>
+              <ul style={styles.privacyList}>
+                <li>Coordinates are stored only on your profile.</li>
+                <li>Used to match you with players within a 10 km radius.</li>
+                <li>Other users see your city, not your exact coordinates.</li>
+                <li>You can turn it off anytime.</li>
+              </ul>
+              <div style={styles.locationActions}>
+                <button type="button" onClick={requestBrowserGeolocation} disabled={saving} style={styles.primaryBtn}>
+                  Share my location
                 </button>
-                {geoError && (
-                  <p style={styles.fieldError} role="alert">
-                    {geoError}
-                  </p>
-                )}
+                <button type="button" onClick={cancelLocationNotice} disabled={saving} style={styles.secondaryBtn}>
+                  Not now
+                </button>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Requesting state */}
-            {geoState === 'requesting' && (
-              <p style={styles.hint} role="status" aria-live="polite">
-                Requesting your location…
-              </p>
-            )}
+          {(geoState === 'idle' || geoState === 'denied' || geoState === 'error') && (
+            <div style={{ marginTop: 10 }}>
+              <button type="button" onClick={openLocationNotice} disabled={saving} style={styles.secondaryBtn}>
+                📍 Use my current location
+              </button>
+              {geoError && <p style={styles.inlineError}>{geoError}</p>}
+            </div>
+          )}
 
-            {/* Manual city entry — always available as fallback (Req 13.3) */}
-            <label htmlFor="location_city" style={styles.label}>
-              City or area
-            </label>
-            <input
-              id="location_city"
-              name="location_city"
-              type="text"
-              value={form.location_city}
-              onChange={handleFieldChange}
-              disabled={saving}
-              style={styles.input}
-              placeholder="e.g. Berlin"
-              aria-describedby="location-hint"
-            />
-            <p id="location-hint" style={styles.hint}>
-              {form.location_lat === null || form.location_lng === null
-                ? 'Used for matching when precise location is off.'
-                : 'Shown on your profile to other players.'}
-            </p>
-          </section>
+          {geoState === 'requesting' && (
+            <p style={styles.hint} role="status">Requesting your location…</p>
+          )}
 
-          {/* ── Sport preferences ── */}
-          <section style={styles.section} aria-labelledby="sports-heading">
-            <h2 id="sports-heading" style={styles.sectionTitle}>
-              Sport Preferences <span style={styles.required}>*</span>
-            </h2>
+          <label htmlFor="location_city" style={{ ...styles.label, marginTop: 16 }}>City or area</label>
+          <input
+            id="location_city" name="location_city" type="text"
+            value={form.location_city} onChange={handleFieldChange}
+            disabled={saving} placeholder="e.g. Berlin"
+          />
+          <p style={styles.hint}>
+            {form.location_lat === null
+              ? 'Used for matching when precise location is off.'
+              : 'Shown on your profile to other players.'}
+          </p>
+        </section>
 
-            {userSports.length === 0 && (
-              <p style={styles.emptyState}>
-                No sports added yet. Add at least one sport below.
-              </p>
-            )}
+        {/* Sports */}
+        <section style={styles.card}>
+          <div style={styles.cardHeaderRow}>
+            <h2 style={styles.cardTitle}>Sport preferences <span style={styles.required}>*</span></h2>
+            <span style={styles.countPill}>{userSports.length} chosen</span>
+          </div>
 
-            {/* Selected sports list */}
-            <ul style={styles.sportsList} aria-label="Selected sports">
-              {userSports.map(({ sport, skill_level }) => (
-                <li key={sport} style={styles.sportItem}>
-                  <span style={styles.sportName}>
+          {userSports.length === 0 && (
+            <p style={styles.emptyInline}>No sports added yet. Pick at least one below.</p>
+          )}
+
+          <ul style={styles.sportList}>
+            {userSports.map(({ sport, skill_level }) => {
+              const theme = themeForSport(sport)
+              return (
+                <li key={sport} style={{ ...styles.sportItem, background: theme.bg, color: theme.text }}>
+                  <span style={{ fontSize: 22 }} aria-hidden="true">{theme.emoji}</span>
+                  <span style={{ fontWeight: 700, flex: 1 }}>
                     {sport.charAt(0).toUpperCase() + sport.slice(1)}
                   </span>
-
-                  <label htmlFor={`skill-${sport}`} style={styles.srOnly}>
-                    Skill level for {sport}
-                  </label>
                   <select
-                    id={`skill-${sport}`}
                     value={skill_level}
-                    onChange={(e) =>
-                      updateSkillLevel(sport, e.target.value as SkillLevel)
-                    }
+                    onChange={(e) => updateSkillLevel(sport, e.target.value as SkillLevel)}
                     disabled={saving}
-                    style={styles.select}
+                    style={styles.skillSelect}
                     aria-label={`Skill level for ${sport}`}
                   >
-                    {SKILL_LEVELS.map((level) => (
-                      <option key={level} value={level}>
-                        {level.charAt(0).toUpperCase() + level.slice(1)}
-                      </option>
+                    {SKILL_LEVELS.map((l) => (
+                      <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>
                     ))}
                   </select>
-
                   <button
-                    type="button"
-                    style={styles.removeButton}
-                    onClick={() => removeSport(sport)}
-                    disabled={saving}
-                    aria-label={`Remove ${sport}`}
+                    type="button" onClick={() => removeSport(sport)} disabled={saving}
+                    style={styles.removeBtn} aria-label={`Remove ${sport}`}
                   >
                     ✕
                   </button>
                 </li>
-              ))}
-            </ul>
+              )
+            })}
+          </ul>
 
-            {/* Add sport buttons */}
-            {availableSportsToAdd.length > 0 && (
-              <div style={styles.addSportsRow} aria-label="Add a sport">
-                {availableSportsToAdd.map((sport) => (
+          {availableToAdd.length > 0 && (
+            <div style={styles.addRow}>
+              <span style={styles.addRowLabel}>Add a sport:</span>
+              {availableToAdd.map((sport) => {
+                const theme = themeForSport(sport)
+                return (
                   <button
-                    key={sport}
-                    type="button"
-                    style={styles.addSportButton}
-                    onClick={() => addSport(sport)}
-                    disabled={saving}
+                    key={sport} type="button" onClick={() => addSport(sport)} disabled={saving}
+                    style={{ ...styles.addChip, borderColor: theme.solid, color: theme.text }}
                   >
-                    + {sport.charAt(0).toUpperCase() + sport.slice(1)}
+                    <span aria-hidden="true">{theme.emoji}</span>
+                    {sport.charAt(0).toUpperCase() + sport.slice(1)}
                   </button>
-                ))}
-              </div>
-            )}
-          </section>
+                )
+              })}
+            </div>
+          )}
+        </section>
 
-          {/* ── Save button ── */}
+        <div style={styles.footerActions}>
           <button
-            type="submit"
-            disabled={saving}
-            style={{
-              ...styles.saveButton,
-              ...(saving ? styles.saveButtonDisabled : {}),
-            }}
-            aria-busy={saving}
+            type="submit" disabled={saving}
+            style={{ ...styles.primaryBtnLarge, ...(saving ? styles.busy : {}) }}
           >
             {saving ? 'Saving…' : 'Save profile'}
           </button>
-        </form>
-      </div>
-    </main>
+        </div>
+      </form>
+    </div>
   )
 }
 
-// ─── Inline styles ────────────────────────────────────────────────────────────
-
 const styles: Record<string, React.CSSProperties> = {
-  loadingContainer: {
+  loading: { textAlign: 'center', padding: 48, color: colors.ink[500] },
+  page: { maxWidth: 780, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 },
+
+  header: {
+    display: 'flex',
     alignItems: 'center',
-    display: 'flex',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    color: '#718096',
-    fontSize: '1rem',
+    gap: 20,
+    padding: 24,
+    background: gradients.cardGloss,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.xl,
+    boxShadow: shadows.md,
   },
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f0f4f8',
-    padding: '2rem 1rem',
-    display: 'flex',
-    justifyContent: 'center',
+  avatarBlock: { position: 'relative', flexShrink: 0 },
+  avatar: {
+    width: 96, height: 96, borderRadius: '50%',
+    objectFit: 'cover',
+    border: `4px solid ${colors.surface}`,
+    boxShadow: shadows.md,
   },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: '12px',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-    padding: '2.5rem 2rem',
-    width: '100%',
-    maxWidth: '560px',
-    alignSelf: 'flex-start',
+  avatarFallback: {
+    width: 96, height: 96, borderRadius: '50%',
+    background: gradients.brandStrong, color: '#fff',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 36, fontWeight: 800,
+    border: `4px solid ${colors.surface}`,
+    boxShadow: shadows.md,
+  },
+  avatarEdit: {
+    position: 'absolute',
+    right: -4, bottom: -4,
+    width: 32, height: 32, borderRadius: '50%',
+    background: colors.brand[500], color: '#fff',
+    border: `2px solid ${colors.surface}`,
+    fontSize: 14,
+    cursor: 'pointer',
+    boxShadow: shadows.sm,
+  },
+
+  eyebrow: {
+    display: 'inline-block',
+    fontSize: 11, fontWeight: 700, letterSpacing: '0.1em',
+    textTransform: 'uppercase', color: colors.brand[600],
   },
   title: {
-    margin: '0 0 1.5rem',
-    fontSize: '1.75rem',
-    fontWeight: 700,
-    color: '#1a202c',
+    margin: '4px 0 0', fontSize: 28, fontWeight: 800,
+    letterSpacing: '-0.02em',
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
   },
-  section: {
-    marginBottom: '1.75rem',
+  username: { margin: '4px 0 0', color: colors.ink[500], fontSize: 14 },
+  inlineError: { color: colors.danger[700], fontSize: 13, margin: '6px 0 0' },
+
+  alertSuccess: {
+    padding: '12px 16px',
+    background: colors.success[100], color: colors.success[900],
+    border: `1px solid ${colors.success[300]}`,
+    borderRadius: radii.md, fontSize: 14,
   },
-  sectionTitle: {
-    fontSize: '1rem',
-    fontWeight: 700,
-    color: '#2d3748',
-    margin: '0 0 0.75rem',
-    paddingBottom: '0.5rem',
-    borderBottom: '1px solid #e2e8f0',
+  alertError: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    gap: 12,
+    padding: '12px 16px',
+    background: colors.danger[100], color: colors.danger[900],
+    border: `1px solid ${colors.danger[300]}`,
+    borderRadius: radii.md, fontSize: 14,
   },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
+  dismissBtn: {
+    background: 'transparent',
+    border: `1px solid ${colors.danger[300]}`,
+    borderRadius: radii.sm,
+    color: colors.danger[700],
+    fontSize: 12, fontWeight: 600, padding: '4px 10px', cursor: 'pointer',
   },
-  label: {
-    display: 'block',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    color: '#2d3748',
-    marginBottom: '0.25rem',
-    marginTop: '0.75rem',
+
+  form: { display: 'flex', flexDirection: 'column', gap: 18 },
+
+  card: {
+    padding: 24,
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.xl,
+    boxShadow: shadows.sm,
   },
-  required: {
-    color: '#e53e3e',
-    marginLeft: '2px',
+  cardTitle: { margin: '0 0 12px', fontSize: 16, fontWeight: 700 },
+  cardHeaderRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 16, gap: 8,
   },
-  charCount: {
-    fontWeight: 400,
-    color: '#718096',
-    fontSize: '0.8rem',
-    marginLeft: '0.5rem',
+  countPill: {
+    padding: '4px 10px',
+    background: colors.brand[50],
+    color: colors.brand[700],
+    borderRadius: 999, fontSize: 11, fontWeight: 700,
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
   },
-  input: {
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    fontSize: '1rem',
-    padding: '0.625rem 0.75rem',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
+
+  label: { display: 'block', fontSize: 13, fontWeight: 600, color: colors.ink[700], marginBottom: 6 },
+  required: { color: colors.danger[500] },
+  hint: { color: colors.ink[500], fontSize: 12, margin: '6px 0 0' },
+  charCount: { color: colors.ink[500], fontSize: 12, fontWeight: 400, marginLeft: 6 },
+  emptyInline: { color: colors.ink[500], fontStyle: 'italic', margin: '4px 0 12px' },
+
+  primaryBtn: {
+    padding: '10px 16px',
+    background: gradients.brandStrong,
+    color: '#fff', border: 'none',
+    borderRadius: radii.sm,
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
+    boxShadow: shadows.sm,
   },
-  textarea: {
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    fontSize: '1rem',
-    padding: '0.625rem 0.75rem',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-    resize: 'vertical',
-    fontFamily: 'inherit',
+  primaryBtnLarge: {
+    padding: '12px 28px',
+    background: gradients.brandStrong,
+    color: '#fff', border: 'none',
+    borderRadius: radii.sm,
+    fontSize: 15, fontWeight: 700, cursor: 'pointer',
+    boxShadow: shadows.md,
   },
-  hint: {
-    color: '#718096',
-    fontSize: '0.8rem',
-    margin: '0.25rem 0 0',
+  secondaryBtn: {
+    padding: '10px 16px',
+    background: colors.surface,
+    color: colors.ink[800],
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.sm,
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
   },
-  avatarRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '1rem',
+  dangerBtn: {
+    padding: '10px 16px',
+    background: colors.surface,
+    color: colors.danger[700],
+    border: `1px solid ${colors.danger[300]}`,
+    borderRadius: radii.sm,
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
   },
-  avatarPreview: {
-    width: '72px',
-    height: '72px',
-    borderRadius: '50%',
-    objectFit: 'cover',
-    border: '2px solid #e2e8f0',
-    flexShrink: 0,
+  busy: { opacity: 0.85, cursor: 'wait' },
+
+  locationPanel: {
+    marginTop: 12,
+    padding: 14,
+    background: colors.success[100],
+    border: `1px solid ${colors.success[300]}`,
+    borderRadius: radii.md,
   },
-  avatarPlaceholder: {
-    width: '72px',
-    height: '72px',
-    borderRadius: '50%',
-    backgroundColor: '#e2e8f0',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '2rem',
-    flexShrink: 0,
+  locationOn: { display: 'flex', alignItems: 'center', gap: 8, color: colors.success[900] },
+  locationDot: {
+    width: 10, height: 10, borderRadius: '50%',
+    background: colors.success[500], display: 'inline-block',
   },
-  avatarControls: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.25rem',
+  locationCoords: { margin: '6px 0 10px', fontFamily: 'ui-monospace, monospace', fontSize: 13 },
+  locationActions: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 },
+
+  privacyCard: {
+    marginTop: 12,
+    padding: 16,
+    background: colors.brand[50],
+    border: `1px solid ${colors.brand[200]}`,
+    borderRadius: radii.md,
+    color: colors.brand[900],
   },
-  secondaryButton: {
-    backgroundColor: 'transparent',
-    border: '1px solid #3182ce',
-    borderRadius: '6px',
-    color: '#3182ce',
-    cursor: 'pointer',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    padding: '0.5rem 0.875rem',
-    alignSelf: 'flex-start',
+  privacyList: {
+    margin: '0 0 10px', paddingLeft: 18,
+    listStyle: 'disc',
+    color: colors.ink[700], fontSize: 13, lineHeight: 1.5,
   },
-  fieldError: {
-    color: '#c53030',
-    fontSize: '0.8rem',
-    margin: '0.25rem 0 0',
-  },
-  emptyState: {
-    color: '#718096',
-    fontSize: '0.875rem',
-    fontStyle: 'italic',
-    margin: '0 0 0.75rem',
-  },
-  sportsList: {
-    listStyle: 'none',
-    margin: '0 0 0.75rem',
-    padding: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.5rem',
+
+  sportList: {
+    listStyle: 'none', padding: 0, margin: 0,
+    display: 'flex', flexDirection: 'column', gap: 8,
   },
   sportItem: {
     display: 'flex',
     alignItems: 'center',
-    gap: '0.75rem',
-    backgroundColor: '#f7fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    padding: '0.5rem 0.75rem',
+    gap: 12,
+    padding: '10px 14px',
+    borderRadius: radii.md,
+    border: `1px solid ${colors.ink[200]}`,
   },
-  sportName: {
-    flex: 1,
-    fontWeight: 600,
-    color: '#2d3748',
-    fontSize: '0.9rem',
+  skillSelect: {
+    width: 'auto',
+    minWidth: 140,
+    padding: '6px 28px 6px 10px',
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.sm,
+    color: colors.ink[800],
+    fontSize: 13,
   },
-  select: {
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    fontSize: '0.875rem',
-    padding: '0.375rem 0.5rem',
-    backgroundColor: '#fff',
-    cursor: 'pointer',
+  removeBtn: {
+    width: 32, height: 32,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: '50%',
+    color: colors.ink[500], cursor: 'pointer',
+    transition: 'color 0.15s, background 0.15s',
   },
-  removeButton: {
-    background: 'none',
-    border: 'none',
-    color: '#a0aec0',
-    cursor: 'pointer',
-    fontSize: '0.875rem',
-    padding: '0.25rem',
-    lineHeight: 1,
+  addRow: {
+    display: 'flex', flexWrap: 'wrap', alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
   },
-  addSportsRow: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '0.5rem',
+  addRowLabel: {
+    fontSize: 12, fontWeight: 600,
+    color: colors.ink[500],
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
   },
-  addSportButton: {
-    backgroundColor: '#ebf8ff',
-    border: '1px solid #bee3f8',
-    borderRadius: '6px',
-    color: '#2b6cb0',
-    cursor: 'pointer',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    padding: '0.375rem 0.75rem',
-  },
-  saveButton: {
-    backgroundColor: '#3182ce',
-    border: 'none',
-    borderRadius: '6px',
-    color: '#ffffff',
-    cursor: 'pointer',
-    fontSize: '1rem',
-    fontWeight: 600,
-    marginTop: '0.5rem',
-    padding: '0.75rem',
-    transition: 'background-color 0.15s',
-  },
-  saveButtonDisabled: {
-    backgroundColor: '#90cdf4',
-    cursor: 'not-allowed',
-  },
-  successMessage: {
-    backgroundColor: '#f0fff4',
-    border: '1px solid #9ae6b4',
-    borderRadius: '6px',
-    color: '#276749',
-    fontSize: '0.875rem',
-    marginBottom: '1rem',
-    padding: '0.75rem 1rem',
-  },
-  errorBox: {
-    backgroundColor: '#fff5f5',
-    border: '1px solid #fed7d7',
-    borderRadius: '6px',
-    color: '#c53030',
-    fontSize: '0.875rem',
-    marginBottom: '1rem',
-    padding: '0.75rem 1rem',
-    display: 'flex',
+  addChip: {
+    display: 'inline-flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '0.75rem',
-  },
-  errorText: {
-    margin: 0,
-    flex: 1,
-  },
-  retryButton: {
-    background: 'none',
-    border: '1px solid #fc8181',
-    borderRadius: '4px',
-    color: '#c53030',
+    gap: 6,
+    padding: '8px 14px',
+    background: colors.surface,
+    border: '1px solid',
+    borderRadius: 999,
+    fontSize: 13, fontWeight: 600,
     cursor: 'pointer',
-    fontSize: '0.8rem',
-    padding: '0.25rem 0.5rem',
-    flexShrink: 0,
+    transition: 'all 0.15s ease',
   },
-  // ── Location section styles (Req 13.2, 13.3, 13.4) ──
-  locationCta: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.5rem',
-    margin: '0.75rem 0',
-  },
-  locationGranted: {
-    backgroundColor: '#f0fff4',
-    border: '1px solid #9ae6b4',
-    borderRadius: '8px',
-    padding: '0.75rem 1rem',
-    margin: '0.75rem 0',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '1rem',
-    flexWrap: 'wrap',
-  },
-  locationButtonRow: {
-    display: 'flex',
-    gap: '0.5rem',
-    flexWrap: 'wrap',
-  },
-  coordText: {
-    color: '#276749',
-    fontSize: '0.8rem',
-    fontFamily: 'monospace',
-    margin: '0.1rem 0 0',
-  },
-  privacyNotice: {
-    backgroundColor: '#ebf8ff',
-    border: '1px solid #bee3f8',
-    borderRadius: '8px',
-    padding: '1rem',
-    margin: '0.75rem 0',
-  },
-  privacyNoticeTitle: {
-    color: '#2b6cb0',
-    fontSize: '0.95rem',
-    fontWeight: 700,
-    margin: '0 0 0.5rem',
-  },
-  privacyList: {
-    color: '#2c5282',
-    fontSize: '0.85rem',
-    margin: '0 0 0.75rem',
-    paddingLeft: '1.25rem',
-  },
-  primaryInlineButton: {
-    backgroundColor: '#3182ce',
-    border: 'none',
-    borderRadius: '6px',
-    color: '#ffffff',
-    cursor: 'pointer',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    padding: '0.5rem 0.875rem',
-  },
-  dangerButton: {
-    backgroundColor: 'transparent',
-    border: '1px solid #e53e3e',
-    borderRadius: '6px',
-    color: '#c53030',
-    cursor: 'pointer',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    padding: '0.5rem 0.875rem',
-  },
-  srOnly: {
-    position: 'absolute',
-    width: '1px',
-    height: '1px',
-    padding: 0,
-    margin: '-1px',
-    overflow: 'hidden',
-    clip: 'rect(0,0,0,0)',
-    whiteSpace: 'nowrap',
-    border: 0,
+
+  footerActions: {
+    display: 'flex', justifyContent: 'flex-end', marginTop: 8,
   },
 }

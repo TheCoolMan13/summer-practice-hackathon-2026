@@ -1,0 +1,247 @@
+/*
+ * Feature: show-up-2-move
+ * Global styles — resets, typography, form controls, animations.
+ * Paired with `src/lib/theme.ts` design tokens.
+ */
+
+:root {
+  /* Brand */
+  --color-brand-50:  #eef3ff;
+  --color-brand-100: #dbe5ff;
+  --color-brand-200: #bccdff;
+  --color-brand-300: #94adff;
+  --color-brand-400: #6b87ff;
+  --color-brand-500: #4f63ff;
+  --color-brand-600: #3b47e6;
+  --color-brand-700: #2f38bd;
+  --color-brand-800: #222893;
+  --color-brand-900: #161a66;
+
+  /* Accent */
+  --color-accent-400: #ff9f7d;
+  --color-accent-500: #ff7a4d;
+  --color-accent-600: #e65b2e;
+
+  /* Neutrals */
+  --color-ink-50:  #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+
+  /* Status */
+  --color-success-500: #22c55e;
+  --color-warning-500: #f59e0b;
+  --color-danger-500:  #ef4444;
+  --color-info-500:    #3b82f6;
+
+  /* Surfaces & overlays */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-backdrop: rgba(15, 23, 42, 0.55);
+
+  /* Radii */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-sm: 0 2px 6px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15,23,42,0.04);
+  --shadow-md: 0 10px 20px -6px rgba(15, 23, 42, 0.08), 0 3px 6px -2px rgba(15,23,42,0.05);
+  --shadow-lg: 0 20px 40px -12px rgba(15, 23, 42, 0.18), 0 4px 10px -4px rgba(15,23,42,0.08);
+  --shadow-xl: 0 30px 60px -24px rgba(15, 23, 42, 0.28);
+  --shadow-focus: 0 0 0 3px rgba(79, 99, 255, 0.35);
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ────────────── Reset ────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--color-ink-800);
+  background: var(--color-ink-50);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6, p, ul, ol {
+  margin: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-ink-900);
+  line-height: 1.2;
+}
+
+h1 { font-size: clamp(1.75rem, 2.2vw + 1rem, 2.25rem); letter-spacing: -0.02em; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.15rem; }
+
+a {
+  color: var(--color-brand-600);
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.15s var(--ease-smooth);
+}
+a:hover { color: var(--color-brand-700); text-decoration: underline; }
+
+img { max-width: 100%; display: block; }
+
+ul, ol { padding: 0; }
+ul { list-style: none; }
+
+/* ────────────── Form controls ────────────── */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid var(--color-ink-200);
+  border-radius: var(--radius-sm);
+  padding: 0.625rem 0.75rem;
+  font-size: 0.95rem;
+  color: var(--color-ink-900);
+  outline: none;
+  transition:
+    border-color 0.15s var(--ease-smooth),
+    box-shadow 0.15s var(--ease-smooth),
+    background 0.15s var(--ease-smooth);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-ink-400);
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--color-ink-300);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--color-brand-500);
+  box-shadow: var(--shadow-focus);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--color-ink-50);
+  color: var(--color-ink-500);
+  cursor: not-allowed;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.5;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'><path d='M1 1.5L6 6.5L11 1.5' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  padding-right: 2.25rem;
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+*:focus-visible {
+  outline: none;
+}
+
+/* ────────────── Scrollbar polish (webkit) ────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-200);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-ink-300); background-clip: padding-box; }
+
+/* ────────────── Animations ────────────── */
+@keyframes s2m-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes s2m-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.15); opacity: 0.75; }
+}
+
+@keyframes s2m-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes s2m-shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position: 600px 0; }
+}
+
+/* Used by animated status dots etc. */
+.s2m-pulse { animation: s2m-pulse 1.4s ease-in-out infinite; }
+.s2m-spin { animation: s2m-spin 0.8s linear infinite; }
+.s2m-fade-in { animation: s2m-fade-in 0.35s var(--ease-out) both; }
+
+/* Leaflet tile cleanup — Leaflet's default CSS has a grey background that
+   clashes with our surfaces. This keeps maps crisp inside rounded cards. */
+.leaflet-container {
+  background: var(--color-ink-100) !important;
+  font-family: var(--font-sans) !important;
+}

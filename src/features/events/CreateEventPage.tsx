@@ -4,26 +4,19 @@ import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
 import { LatLng } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from '../../lib/supabaseClient'
-
-// ─── Constants ────────────────────────────────────────────────────────────────
+import { colors, gradients, radii, shadows, themeForSport } from '../../lib/theme'
 
 const SPORTS = ['football', 'basketball', 'tennis', 'volleyball'] as const
 type Sport = (typeof SPORTS)[number]
-
 const SKILL_LEVELS = ['beginner', 'intermediate', 'advanced'] as const
 type SkillLevel = (typeof SKILL_LEVELS)[number]
-
 const DESCRIPTION_MAX = 500
-
-// Sport size constants (from design.md)
 const SPORT_SIZES: Record<Sport, { min: number; max: number }> = {
   football: { min: 10, max: 14 },
   basketball: { min: 6, max: 10 },
   tennis: { min: 2, max: 4 },
   volleyball: { min: 8, max: 12 },
 }
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface EventFormState {
   sport: Sport | ''
@@ -37,656 +30,405 @@ interface EventFormState {
   description: string
 }
 
-// ─── Map Click Handler Component ─────────────────────────────────────────────
-
-interface MapClickHandlerProps {
-  onLocationSelect: (lat: number, lng: number) => void
-}
-
-function MapClickHandler({ onLocationSelect }: MapClickHandlerProps) {
-  useMapEvents({
-    click: (e) => {
-      onLocationSelect(e.latlng.lat, e.latlng.lng)
-    },
-  })
+function MapClickHandler({ onLocationSelect }: { onLocationSelect: (lat: number, lng: number) => void }) {
+  useMapEvents({ click: (e) => onLocationSelect(e.latlng.lat, e.latlng.lng) })
   return null
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
-/**
- * CreateEventPage
- *
- * Allows authenticated users to manually create sports events.
- *
- * Requirements covered:
- *  - 10.1: Required fields: sport, location, start_time, participant_limit
- *  - 10.2: Optional fields: skill_requirement, price_per_person, description (max 500 chars)
- *  - 10.3: Event appears in feed within 10 seconds
- *  - 11.6: Display event location on embedded Leaflet map
- *
- * The event is inserted with organizer_id = auth.uid() and source='manual'.
- */
 export default function CreateEventPage() {
   const navigate = useNavigate()
   const [userId, setUserId] = useState<string | null>(null)
-
-  // Form state
   const [form, setForm] = useState<EventFormState>({
-    sport: '',
-    location_name: '',
-    location_lat: null,
-    location_lng: null,
-    start_time: '',
-    participant_limit: '',
-    skill_requirement: '',
-    price_per_person: '',
-    description: '',
+    sport: '', location_name: '', location_lat: null, location_lng: null,
+    start_time: '', participant_limit: '', skill_requirement: '',
+    price_per_person: '', description: '',
   })
-
-  // UI state
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-
-  // Map state
-  const [mapCenter, setMapCenter] = useState<[number, number]>([52.52, 13.405]) // Default: Berlin
-
-  // ── Load user on mount ──────────────────────────────────────────────────────
+  const [mapCenter, setMapCenter] = useState<[number, number]>([52.52, 13.405])
 
   useEffect(() => {
+    let cancelled = false
     async function loadUser() {
-      setLoading(true)
-      setErrorMessage(null)
-
+      setLoading(true); setErrorMessage(null)
       try {
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser()
-
-        if (userError || !user) {
-          setErrorMessage('Unable to load user session. Please log in again.')
-          setLoading(false)
-          return
-        }
-
+        const { data: { user }, error } = await supabase.auth.getUser()
+        if (error || !user) { setErrorMessage('Please log in again.'); return }
+        if (cancelled) return
         setUserId(user.id)
-
-        // Try to get user's location from profile for map centering
         const { data: profile } = await supabase
-          .from('profiles')
-          .select('location_lat, location_lng')
-          .eq('id', user.id)
-          .single()
-
+          .from('profiles').select('location_lat, location_lng').eq('id', user.id).single()
         if (profile?.location_lat && profile?.location_lng) {
           setMapCenter([profile.location_lat, profile.location_lng])
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Failed to load user data.'
-        setErrorMessage(message)
+        if (!cancelled) setErrorMessage(err instanceof Error ? err.message : 'Failed to load user data.')
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
-
     loadUser()
+    return () => { cancelled = true }
   }, [])
 
-  // ── Form field handlers ─────────────────────────────────────────────────────
-
-  function handleFieldChange(
-    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
-  ) {
+  function handleFieldChange(e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
     const { name, value } = e.target
     setForm((prev) => ({ ...prev, [name]: value }))
   }
-
   function handleSportChange(e: ChangeEvent<HTMLSelectElement>) {
     const sport = e.target.value as Sport | ''
     setForm((prev) => ({
-      ...prev,
-      sport,
-      // Auto-set participant limit to sport's max when sport is selected
+      ...prev, sport,
       participant_limit: sport ? SPORT_SIZES[sport].max : '',
     }))
   }
-
-  // ── Map handlers ────────────────────────────────────────────────────────────
-
   function handleLocationSelect(lat: number, lng: number) {
-    setForm((prev) => ({
-      ...prev,
-      location_lat: lat,
-      location_lng: lng,
-    }))
+    setForm((prev) => ({ ...prev, location_lat: lat, location_lng: lng }))
   }
 
-  // ── Save handler ────────────────────────────────────────────────────────────
-
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    setErrorMessage(null)
-
-    // Req 10.1: Required fields validation
-    if (!form.sport) {
-      setErrorMessage('Sport is required.')
-      return
-    }
-    if (!form.location_name.trim()) {
-      setErrorMessage('Location name is required.')
-      return
-    }
-    if (form.location_lat === null || form.location_lng === null) {
-      setErrorMessage('Please select a location on the map.')
-      return
-    }
-    if (!form.start_time) {
-      setErrorMessage('Start time is required.')
-      return
-    }
-    if (!form.participant_limit || form.participant_limit < 1) {
-      setErrorMessage('Participant limit must be at least 1.')
-      return
-    }
-
-    // Validate participant limit against sport constraints
+    e.preventDefault(); setErrorMessage(null)
+    if (!form.sport) return setErrorMessage('Sport is required.')
+    if (!form.location_name.trim()) return setErrorMessage('Location name is required.')
+    if (form.location_lat === null || form.location_lng === null) return setErrorMessage('Please select a location on the map.')
+    if (!form.start_time) return setErrorMessage('Start time is required.')
+    if (!form.participant_limit || form.participant_limit < 1) return setErrorMessage('Participant limit must be at least 1.')
     const sport = form.sport as Sport
     const limit = Number(form.participant_limit)
     if (limit < SPORT_SIZES[sport].min || limit > SPORT_SIZES[sport].max) {
-      setErrorMessage(
+      return setErrorMessage(
         `Participant limit for ${sport} must be between ${SPORT_SIZES[sport].min} and ${SPORT_SIZES[sport].max}.`,
       )
-      return
     }
-
-    // Validate start time is in the future
-    const startTime = new Date(form.start_time)
-    if (startTime <= new Date()) {
-      setErrorMessage('Start time must be in the future.')
-      return
-    }
-
-    if (!userId) {
-      setErrorMessage('User session not found. Please log in again.')
-      return
-    }
+    if (new Date(form.start_time) <= new Date()) return setErrorMessage('Start time must be in the future.')
+    if (!userId) return setErrorMessage('User session not found.')
 
     setSaving(true)
-
     try {
-      // Req 10.1, 10.2: INSERT event with organizer_id = auth.uid() and source='manual'
-      const { data, error: insertError } = await supabase
-        .from('events')
-        .insert({
-          sport: form.sport,
-          location_name: form.location_name.trim(),
-          location_lat: form.location_lat,
-          location_lng: form.location_lng,
-          start_time: new Date(form.start_time).toISOString(),
-          participant_limit: Number(form.participant_limit),
-          skill_requirement: form.skill_requirement || null,
-          price_per_person: form.price_per_person ? Number(form.price_per_person) : null,
-          description: form.description.trim() || null,
-          organizer_id: userId,
-          source: 'manual',
-          status: 'open',
-        })
-        .select()
-        .single()
+      const { data, error } = await supabase.from('events').insert({
+        sport: form.sport,
+        location_name: form.location_name.trim(),
+        location_lat: form.location_lat,
+        location_lng: form.location_lng,
+        start_time: new Date(form.start_time).toISOString(),
+        participant_limit: Number(form.participant_limit),
+        skill_requirement: form.skill_requirement || null,
+        price_per_person: form.price_per_person ? Number(form.price_per_person) : null,
+        description: form.description.trim() || null,
+        organizer_id: userId, source: 'manual', status: 'open',
+      }).select().single()
+      if (error) throw error
+      if (!data) throw new Error('Event was created but no data was returned.')
 
-      if (insertError) {
-        console.error('Event insert error:', insertError)
-        throw insertError
-      }
-
-      if (!data) {
-        throw new Error('Event was created but no data was returned.')
-      }
-
-      // Add organizer as first participant
-      const { error: participantError } = await supabase
+      const { error: partError } = await supabase
         .from('event_participants')
-        .insert({
-          event_id: data.id,
-          user_id: userId,
-          status: 'joined',
-        })
-
-      // Ignore duplicate key errors (23505) - organizer already added
-      // This can happen if the user refreshes or submits twice
-      if (participantError) {
-        console.error('Participant insert error:', participantError)
-        if (participantError.code !== '23505') {
-          throw participantError
-        }
-      }
-
-      // Req 10.3: Event appears in feed (redirect to feed)
+        .insert({ event_id: data.id, user_id: userId, status: 'joined' })
+      if (partError && partError.code !== '23505') throw partError
       navigate('/feed')
     } catch (err: unknown) {
-      console.error('Create event error:', err)
-      const message = err instanceof Error ? err.message : 'Failed to create event.'
-      setErrorMessage(message)
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to create event.')
     } finally {
       setSaving(false)
     }
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  if (loading) return <div style={styles.loading}>Loading…</div>
 
-  if (loading) {
-    return (
-      <div style={styles.loadingContainer} aria-live="polite" aria-label="Loading">
-        Loading…
-      </div>
-    )
-  }
-
-  const selectedSport = form.sport as Sport | ''
-  const minLimit = selectedSport ? SPORT_SIZES[selectedSport].min : 1
-  const maxLimit = selectedSport ? SPORT_SIZES[selectedSport].max : 100
+  const selected = form.sport as Sport | ''
+  const minLimit = selected ? SPORT_SIZES[selected].min : 1
+  const maxLimit = selected ? SPORT_SIZES[selected].max : 100
 
   return (
-    <main style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>Create Event</h1>
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <span style={styles.eyebrow}>Create</span>
+        <h1 style={styles.title}>Start a pickup event</h1>
+        <p style={styles.subtitle}>
+          Set the basics — players will see your event on the feed and can join with one tap.
+        </p>
+      </header>
 
-        {/* Error message */}
+      <form onSubmit={handleSubmit} noValidate style={styles.form}>
         {errorMessage && (
-          <div style={styles.errorBox} role="alert">
-            <p style={styles.errorText}>{errorMessage}</p>
-            <button
-              type="button"
-              style={styles.dismissButton}
-              onClick={() => setErrorMessage(null)}
-            >
+          <div style={styles.errorBanner} role="alert">
+            <span aria-hidden="true">⚠️</span>
+            <span>{errorMessage}</span>
+            <button type="button" onClick={() => setErrorMessage(null)} style={styles.dismissBtn}>
               Dismiss
             </button>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} noValidate style={styles.form}>
-          {/* ── Sport (required) ── */}
-          <section style={styles.section}>
-            <label htmlFor="sport" style={styles.label}>
-              Sport <span style={styles.required}>*</span>
-            </label>
-            <select
-              id="sport"
-              name="sport"
-              required
-              value={form.sport}
-              onChange={handleSportChange}
-              disabled={saving}
-              style={styles.select}
-              aria-required="true"
-            >
-              <option value="">Select a sport</option>
-              {SPORTS.map((sport) => (
-                <option key={sport} value={sport}>
-                  {sport.charAt(0).toUpperCase() + sport.slice(1)}
-                </option>
-              ))}
-            </select>
-          </section>
-
-          {/* ── Location name (required) ── */}
-          <section style={styles.section}>
-            <label htmlFor="location_name" style={styles.label}>
-              Location name <span style={styles.required}>*</span>
-            </label>
-            <input
-              id="location_name"
-              name="location_name"
-              type="text"
-              required
-              value={form.location_name}
-              onChange={handleFieldChange}
-              disabled={saving}
-              style={styles.input}
-              placeholder="e.g. Central Park Basketball Court"
-              aria-required="true"
-            />
-          </section>
-
-          {/* ── Map (required) ── */}
-          <section style={styles.section}>
-            <label style={styles.label}>
-              Location on map <span style={styles.required}>*</span>
-            </label>
-            <p style={styles.hint}>Click on the map to select the event location</p>
-            <div style={styles.mapContainer}>
-              <MapContainer
-                center={mapCenter}
-                zoom={13}
-                style={{ height: '300px', width: '100%', borderRadius: '8px' }}
-              >
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-                <MapClickHandler onLocationSelect={handleLocationSelect} />
-                {form.location_lat !== null && form.location_lng !== null && (
-                  <Marker position={new LatLng(form.location_lat, form.location_lng)} />
-                )}
-              </MapContainer>
-            </div>
-            {form.location_lat !== null && form.location_lng !== null && (
-              <p style={styles.coordinatesText}>
-                Selected: {form.location_lat.toFixed(5)}, {form.location_lng.toFixed(5)}
-              </p>
-            )}
-          </section>
-
-          {/* ── Start time (required) ── */}
-          <section style={styles.section}>
-            <label htmlFor="start_time" style={styles.label}>
-              Start time <span style={styles.required}>*</span>
-            </label>
-            <input
-              id="start_time"
-              name="start_time"
-              type="datetime-local"
-              required
-              value={form.start_time}
-              onChange={handleFieldChange}
-              disabled={saving}
-              style={styles.input}
-              aria-required="true"
-            />
-          </section>
-
-          {/* ── Participant limit (required) ── */}
-          <section style={styles.section}>
-            <label htmlFor="participant_limit" style={styles.label}>
-              Participant limit <span style={styles.required}>*</span>
-            </label>
-            <input
-              id="participant_limit"
-              name="participant_limit"
-              type="number"
-              required
-              min={minLimit}
-              max={maxLimit}
-              value={form.participant_limit}
-              onChange={handleFieldChange}
-              disabled={saving}
-              style={styles.input}
-              aria-required="true"
-              aria-describedby="participant-hint"
-            />
-            {selectedSport && (
-              <p id="participant-hint" style={styles.hint}>
-                For {selectedSport}: {minLimit}–{maxLimit} participants
-              </p>
-            )}
-          </section>
-
-          {/* ── Skill requirement (optional) ── */}
-          <section style={styles.section}>
-            <label htmlFor="skill_requirement" style={styles.label}>
-              Skill requirement
-            </label>
-            <select
-              id="skill_requirement"
-              name="skill_requirement"
-              value={form.skill_requirement}
-              onChange={handleFieldChange}
-              disabled={saving}
-              style={styles.select}
-            >
-              <option value="">Any skill level</option>
-              {SKILL_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level.charAt(0).toUpperCase() + level.slice(1)}
-                </option>
-              ))}
-            </select>
-            <p style={styles.hint}>Optional</p>
-          </section>
-
-          {/* ── Price per person (optional) ── */}
-          <section style={styles.section}>
-            <label htmlFor="price_per_person" style={styles.label}>
-              Price per person (€)
-            </label>
-            <input
-              id="price_per_person"
-              name="price_per_person"
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.price_per_person}
-              onChange={handleFieldChange}
-              disabled={saving}
-              style={styles.input}
-              placeholder="0.00"
-              aria-describedby="price-hint"
-            />
-            <p id="price-hint" style={styles.hint}>
-              Optional · Leave empty if free
-            </p>
-          </section>
-
-          {/* ── Description (optional) ── */}
-          <section style={styles.section}>
-            <label htmlFor="description" style={styles.label}>
-              Description{' '}
-              <span style={styles.charCount}>
-                {form.description.length}/{DESCRIPTION_MAX}
-              </span>
-            </label>
-            <textarea
-              id="description"
-              name="description"
-              value={form.description}
-              onChange={(e) => {
-                if (e.target.value.length <= DESCRIPTION_MAX) handleFieldChange(e)
-              }}
-              disabled={saving}
-              style={styles.textarea}
-              placeholder="Add any additional details about the event…"
-              maxLength={DESCRIPTION_MAX}
-              rows={4}
-              aria-describedby="description-hint"
-            />
-            <p id="description-hint" style={styles.hint}>
-              Optional · max {DESCRIPTION_MAX} characters
-            </p>
-          </section>
-
-          {/* ── Action buttons ── */}
-          <div style={styles.buttonRow}>
-            <button
-              type="button"
-              style={styles.cancelButton}
-              onClick={() => navigate('/feed')}
-              disabled={saving}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              style={{
-                ...styles.submitButton,
-                ...(saving ? styles.submitButtonDisabled : {}),
-              }}
-              aria-busy={saving}
-            >
-              {saving ? 'Creating…' : 'Create event'}
-            </button>
+        <section style={styles.card}>
+          <h2 style={styles.cardTitle}>Sport</h2>
+          <div style={styles.sportGrid}>
+            {SPORTS.map((s) => {
+              const theme = themeForSport(s)
+              const active = form.sport === s
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => handleSportChange({ target: { value: s } } as any)}
+                  style={{
+                    ...styles.sportBtn,
+                    ...(active
+                      ? { background: theme.bg, borderColor: theme.solid, color: theme.text,
+                          boxShadow: `0 6px 18px -6px ${theme.glow}` }
+                      : {}),
+                  }}
+                  aria-pressed={active}
+                >
+                  <span style={{ fontSize: 26 }} aria-hidden="true">{theme.emoji}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700 }}>
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </span>
+                  <span style={{ fontSize: 11, color: active ? theme.text : colors.ink[500] }}>
+                    {SPORT_SIZES[s].min}–{SPORT_SIZES[s].max} players
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        </form>
-      </div>
-    </main>
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={styles.cardTitle}>Location</h2>
+
+          <label htmlFor="location_name" style={styles.label}>
+            Venue name <span style={styles.required}>*</span>
+          </label>
+          <input
+            id="location_name" name="location_name" type="text" required
+            value={form.location_name} onChange={handleFieldChange} disabled={saving}
+            placeholder="e.g. Tempelhofer Feld basketball court"
+          />
+
+          <p style={{ ...styles.hint, marginTop: 14, marginBottom: 8 }}>
+            Click anywhere on the map to pin the exact spot.
+          </p>
+          <div style={styles.mapWrapper}>
+            <MapContainer
+              center={mapCenter} zoom={13}
+              style={{ height: 320, width: '100%' }}
+            >
+              <TileLayer
+                attribution='&copy; OpenStreetMap contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+              <MapClickHandler onLocationSelect={handleLocationSelect} />
+              {form.location_lat !== null && form.location_lng !== null && (
+                <Marker position={new LatLng(form.location_lat, form.location_lng)} />
+              )}
+            </MapContainer>
+          </div>
+          {form.location_lat !== null && form.location_lng !== null && (
+            <p style={styles.coords}>
+              📍 {form.location_lat.toFixed(5)}, {form.location_lng.toFixed(5)}
+            </p>
+          )}
+        </section>
+
+        <section style={styles.card}>
+          <h2 style={styles.cardTitle}>Details</h2>
+          <div style={styles.twoCol}>
+            <div>
+              <label htmlFor="start_time" style={styles.label}>
+                Start time <span style={styles.required}>*</span>
+              </label>
+              <input
+                id="start_time" name="start_time" type="datetime-local" required
+                value={form.start_time} onChange={handleFieldChange} disabled={saving}
+              />
+            </div>
+            <div>
+              <label htmlFor="participant_limit" style={styles.label}>
+                Participant limit <span style={styles.required}>*</span>
+              </label>
+              <input
+                id="participant_limit" name="participant_limit" type="number" required
+                min={minLimit} max={maxLimit}
+                value={form.participant_limit}
+                onChange={handleFieldChange}
+                disabled={saving}
+              />
+              {selected && (
+                <p style={styles.hint}>For {selected}: {minLimit}–{maxLimit} players</p>
+              )}
+            </div>
+          </div>
+
+          <div style={styles.twoCol}>
+            <div>
+              <label htmlFor="skill_requirement" style={styles.label}>Skill level</label>
+              <select
+                id="skill_requirement" name="skill_requirement"
+                value={form.skill_requirement} onChange={handleFieldChange} disabled={saving}
+              >
+                <option value="">Any skill level</option>
+                {SKILL_LEVELS.map((l) => (
+                  <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>
+                ))}
+              </select>
+              <p style={styles.hint}>Optional</p>
+            </div>
+            <div>
+              <label htmlFor="price_per_person" style={styles.label}>Price per person (€)</label>
+              <input
+                id="price_per_person" name="price_per_person" type="number" min="0" step="0.01"
+                placeholder="0.00"
+                value={form.price_per_person} onChange={handleFieldChange} disabled={saving}
+              />
+              <p style={styles.hint}>Optional · Leave empty if free</p>
+            </div>
+          </div>
+
+          <label htmlFor="description" style={{ ...styles.label, marginTop: 10 }}>
+            Description{' '}
+            <span style={styles.charCount}>
+              {form.description.length}/{DESCRIPTION_MAX}
+            </span>
+          </label>
+          <textarea
+            id="description" name="description"
+            rows={4} maxLength={DESCRIPTION_MAX}
+            value={form.description}
+            onChange={(e) => {
+              if (e.target.value.length <= DESCRIPTION_MAX) handleFieldChange(e)
+            }}
+            disabled={saving}
+            placeholder="Any details players should know…"
+          />
+        </section>
+
+        <div style={styles.actions}>
+          <button type="button" onClick={() => navigate('/feed')} style={styles.cancelBtn} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" disabled={saving} style={{ ...styles.submitBtn, ...(saving ? styles.busy : {}) }}>
+            {saving ? 'Creating…' : 'Create event'}
+          </button>
+        </div>
+      </form>
+    </div>
   )
 }
 
-// ─── Inline styles ────────────────────────────────────────────────────────────
-
 const styles: Record<string, React.CSSProperties> = {
-  loadingContainer: {
-    alignItems: 'center',
-    display: 'flex',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    color: '#718096',
-    fontSize: '1rem',
+  loading: { textAlign: 'center', padding: 48, color: colors.ink[500] },
+  page: { maxWidth: 780, margin: '0 auto' },
+
+  header: { marginBottom: 20, textAlign: 'center' },
+  eyebrow: {
+    display: 'inline-block',
+    fontSize: 11, fontWeight: 700,
+    letterSpacing: '0.1em', textTransform: 'uppercase',
+    color: colors.brand[600],
+    marginBottom: 6,
   },
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f0f4f8',
-    padding: '2rem 1rem',
-    display: 'flex',
-    justifyContent: 'center',
+  title: { margin: 0, fontSize: 32, fontWeight: 800, letterSpacing: '-0.02em' },
+  subtitle: { margin: '8px auto 0', color: colors.ink[600], maxWidth: 520 },
+
+  form: { display: 'flex', flexDirection: 'column', gap: 18 },
+
+  errorBanner: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '12px 16px',
+    background: colors.danger[100],
+    border: `1px solid ${colors.danger[300]}`,
+    color: colors.danger[700],
+    borderRadius: radii.sm, fontSize: 14,
   },
+  dismissBtn: {
+    marginLeft: 'auto',
+    background: 'transparent',
+    border: `1px solid ${colors.danger[300]}`,
+    borderRadius: radii.sm,
+    color: colors.danger[700],
+    fontSize: 12, fontWeight: 600,
+    padding: '4px 10px',
+    cursor: 'pointer',
+  },
+
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: '12px',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-    padding: '2.5rem 2rem',
-    width: '100%',
-    maxWidth: '640px',
-    alignSelf: 'flex-start',
+    padding: 24,
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.xl,
+    boxShadow: shadows.sm,
   },
-  title: {
-    margin: '0 0 1.5rem',
-    fontSize: '1.75rem',
-    fontWeight: 700,
-    color: '#1a202c',
+  cardTitle: { margin: '0 0 16px', fontSize: 16, fontWeight: 700 },
+
+  sportGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+    gap: 10,
   },
-  section: {
-    marginBottom: '1.5rem',
-  },
-  form: {
+  sportBtn: {
     display: 'flex',
     flexDirection: 'column',
+    alignItems: 'center',
+    gap: 8,
+    padding: '16px 12px',
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.md,
+    color: colors.ink[700],
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
   },
+
   label: {
     display: 'block',
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    color: '#2d3748',
-    marginBottom: '0.25rem',
+    fontSize: 13, fontWeight: 600,
+    color: colors.ink[700],
+    marginBottom: 6,
   },
-  required: {
-    color: '#e53e3e',
-    marginLeft: '2px',
+  required: { color: colors.danger[500] },
+  hint: { color: colors.ink[500], fontSize: 12, margin: '6px 0 0' },
+  charCount: { color: colors.ink[500], fontSize: 12, fontWeight: 400, marginLeft: 6 },
+
+  twoCol: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: 16,
+    marginBottom: 16,
   },
-  charCount: {
-    fontWeight: 400,
-    color: '#718096',
-    fontSize: '0.8rem',
-    marginLeft: '0.5rem',
-  },
-  input: {
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    fontSize: '1rem',
-    padding: '0.625rem 0.75rem',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-  },
-  select: {
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    fontSize: '1rem',
-    padding: '0.625rem 0.75rem',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-    backgroundColor: '#fff',
-    cursor: 'pointer',
-  },
-  textarea: {
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    fontSize: '1rem',
-    padding: '0.625rem 0.75rem',
-    outline: 'none',
-    width: '100%',
-    boxSizing: 'border-box',
-    resize: 'vertical',
-    fontFamily: 'inherit',
-  },
-  hint: {
-    color: '#718096',
-    fontSize: '0.8rem',
-    margin: '0.25rem 0 0',
-  },
-  mapContainer: {
-    marginTop: '0.5rem',
-    borderRadius: '8px',
+
+  mapWrapper: {
+    borderRadius: radii.md,
     overflow: 'hidden',
-    border: '1px solid #cbd5e0',
+    border: `1px solid ${colors.ink[200]}`,
   },
-  coordinatesText: {
-    color: '#718096',
-    fontSize: '0.8rem',
-    margin: '0.5rem 0 0',
-    fontFamily: 'monospace',
+  coords: {
+    marginTop: 10,
+    fontSize: 12, fontFamily: 'ui-monospace, monospace',
+    color: colors.ink[600],
   },
-  buttonRow: {
+
+  actions: {
     display: 'flex',
-    gap: '0.75rem',
-    marginTop: '0.5rem',
+    gap: 10,
+    marginTop: 8,
+    justifyContent: 'flex-end',
   },
-  cancelButton: {
-    backgroundColor: 'transparent',
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    color: '#2d3748',
-    cursor: 'pointer',
-    fontSize: '1rem',
-    fontWeight: 600,
-    padding: '0.75rem',
-    flex: 1,
+  cancelBtn: {
+    padding: '12px 20px',
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.sm,
+    color: colors.ink[700],
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
   },
-  submitButton: {
-    backgroundColor: '#3182ce',
+  submitBtn: {
+    padding: '12px 26px',
+    background: gradients.brandStrong,
     border: 'none',
-    borderRadius: '6px',
-    color: '#ffffff',
-    cursor: 'pointer',
-    fontSize: '1rem',
-    fontWeight: 600,
-    padding: '0.75rem',
-    flex: 2,
-    transition: 'background-color 0.15s',
+    borderRadius: radii.sm,
+    color: '#fff',
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
+    boxShadow: shadows.md,
   },
-  submitButtonDisabled: {
-    backgroundColor: '#90cdf4',
-    cursor: 'not-allowed',
-  },
-  errorBox: {
-    backgroundColor: '#fff5f5',
-    border: '1px solid #fed7d7',
-    borderRadius: '6px',
-    color: '#c53030',
-    fontSize: '0.875rem',
-    marginBottom: '1rem',
-    padding: '0.75rem 1rem',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '0.75rem',
-  },
-  errorText: {
-    margin: 0,
-    flex: 1,
-  },
-  dismissButton: {
-    background: 'none',
-    border: '1px solid #fc8181',
-    borderRadius: '4px',
-    color: '#c53030',
-    cursor: 'pointer',
-    fontSize: '0.8rem',
-    padding: '0.25rem 0.5rem',
-    flexShrink: 0,
-  },
+  busy: { opacity: 0.85, cursor: 'wait' },
 }

@@ -1,260 +1,266 @@
 // Feature: show-up-2-move
-// Lists the groups the current user belongs to, with a link into each chat.
-// Requirements: 9.1, 9.2 (makes group chat reachable from the UI)
+// Lists the groups the current user belongs to.
 
 import { useNavigate } from 'react-router-dom'
 import { useMyGroups, MyGroup } from './useMyGroups'
+import { colors, radii, shadows, themeForSport } from '../../lib/theme'
 
-/**
- * MyGroupsPage
- *
- * Entry point for all groups the user belongs to. Each row links to
- * `/groups/:groupId` where the full chat room is rendered.
- */
 export default function MyGroupsPage() {
   const navigate = useNavigate()
   const { groups, loading, error, refresh } = useMyGroups()
 
   return (
     <div style={styles.page}>
-      <div style={styles.card}>
-        <header style={styles.header}>
-          <h1 style={styles.title}>Your Groups</h1>
-          <button
-            type="button"
-            onClick={() => refresh()}
-            style={styles.refreshBtn}
-            disabled={loading}
-          >
-            {loading ? 'Refreshing…' : 'Refresh'}
+      <header style={styles.header}>
+        <div>
+          <span style={styles.eyebrow}>Groups</span>
+          <h1 style={styles.title}>Your group chats</h1>
+          <p style={styles.subtitle}>
+            Every event you join has its own chat with teammates, venue polls, and coordination tools.
+          </p>
+        </div>
+        <button onClick={() => refresh()} disabled={loading} style={styles.refreshBtn}>
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </header>
+
+      {error && <div style={styles.errorBox} role="alert">{error}</div>}
+
+      {!loading && !error && groups.length === 0 && (
+        <div style={styles.empty}>
+          <div style={styles.emptyIcon} aria-hidden="true">💬</div>
+          <h2 style={styles.emptyTitle}>No groups yet</h2>
+          <p style={styles.emptyText}>
+            Join an event from the feed or declare availability, and your group chats will show up here.
+          </p>
+          <button style={styles.cta} onClick={() => navigate('/feed')}>
+            Browse the feed
           </button>
-        </header>
+        </div>
+      )}
 
-        {error && <div style={styles.errorBox}>{error}</div>}
-
-        {!loading && !error && groups.length === 0 && (
-          <div style={styles.emptyState}>
-            <div style={styles.emptyIcon}>👥</div>
-            <h2 style={styles.emptyTitle}>No groups yet</h2>
-            <p style={styles.emptyText}>
-              When you declare availability or join a matched event, a group
-              chat will show up here so you can coordinate with your
-              teammates.
-            </p>
-            <button style={styles.ctaBtn} onClick={() => navigate('/feed')}>
-              Browse the feed
-            </button>
-          </div>
-        )}
-
-        {groups.length > 0 && (
-          <ul style={styles.list}>
-            {groups.map((g) => (
-              <GroupListItem
-                key={g.id}
-                group={g}
-                onOpen={() => navigate(`/groups/${g.id}`)}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+      {groups.length > 0 && (
+        <ul style={styles.list}>
+          {groups.map((g) => (
+            <GroupListItem key={g.id} group={g} onOpen={() => navigate(`/groups/${g.id}`)} />
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
 
-function GroupListItem({
-  group,
-  onOpen,
-}: {
-  group: MyGroup
-  onOpen: () => void
-}) {
+function GroupListItem({ group, onOpen }: { group: MyGroup; onOpen: () => void }) {
+  const theme = themeForSport(group.sport)
   const sportLabel = group.sport.charAt(0).toUpperCase() + group.sport.slice(1)
   const eventTime = group.event_start_time
-    ? new Date(group.event_start_time).toLocaleString()
+    ? new Date(group.event_start_time).toLocaleString([], {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      })
     : null
+  const lastAt = group.last_message_at ? new Date(group.last_message_at) : null
+  const lastStamp = lastAt ? formatRelative(lastAt) : null
 
   return (
     <li>
-      <button type="button" onClick={onOpen} style={styles.listItem}>
+      <button type="button" onClick={onOpen} style={styles.listItem} className="s2m-fade-in">
         <div
           style={{
             ...styles.sportBadge,
-            backgroundColor: sportColor(group.sport),
+            background: theme.bg,
+            color: theme.text,
+            boxShadow: `0 6px 14px -4px ${theme.glow}`,
           }}
         >
-          {sportLabel}
+          <span style={styles.sportEmoji} aria-hidden="true">{theme.emoji}</span>
+          <span>{sportLabel}</span>
         </div>
 
-        <div style={styles.listMain}>
-          <div style={styles.listRow}>
-            <span style={styles.listTitle}>
-              {group.event_title ?? `${sportLabel} group`}
-            </span>
-            <span style={{ ...styles.statusChip, ...statusChipStyle(group.status) }}>
+        <div style={styles.main}>
+          <div style={styles.row}>
+            <h3 style={styles.itemTitle}>{group.event_title ?? `${sportLabel} group`}</h3>
+            <span style={{ ...styles.chip, ...statusChipStyle(group.status) }}>
               {group.status}
             </span>
           </div>
-          <div style={styles.listMeta}>
-            {group.member_count} member{group.member_count === 1 ? '' : 's'}
-            {eventTime ? ` • ${eventTime}` : ''}
-            {group.event_location_name ? ` • ${group.event_location_name}` : ''}
+          <div style={styles.meta}>
+            <span>
+              <strong>{group.member_count}</strong> member{group.member_count === 1 ? '' : 's'}
+            </span>
+            {eventTime && <span>· {eventTime}</span>}
+            {group.event_location_name && <span>· {group.event_location_name}</span>}
           </div>
           {group.last_message_preview ? (
-            <div style={styles.listPreview}>
-              {truncate(group.last_message_preview, 120)}
+            <div style={styles.preview}>
+              <span style={styles.previewText}>{truncate(group.last_message_preview, 110)}</span>
+              {lastStamp && <span style={styles.previewStamp}>{lastStamp}</span>}
             </div>
           ) : (
-            <div style={styles.listPreviewMuted}>
-              No messages yet — start the conversation.
-            </div>
+            <div style={styles.previewMuted}>No messages yet — say hi.</div>
           )}
         </div>
 
-        <div style={styles.chevron}>›</div>
+        <div style={styles.chevron} aria-hidden="true">›</div>
       </button>
     </li>
   )
 }
 
-function sportColor(sport: string): string {
-  const map: Record<string, string> = {
-    football: '#28a745',
-    basketball: '#fd7e14',
-    tennis: '#ffc107',
-    volleyball: '#17a2b8',
-  }
-  return map[sport.toLowerCase()] ?? '#007bff'
-}
-
 function statusChipStyle(status: MyGroup['status']): React.CSSProperties {
   switch (status) {
-    case 'confirmed':
-      return { background: '#d4edda', color: '#155724' }
-    case 'cancelled':
-      return { background: '#f8d7da', color: '#721c24' }
-    case 'completed':
-      return { background: '#e2e3e5', color: '#495057' }
+    case 'confirmed': return { background: colors.success[100], color: colors.success[700] }
+    case 'cancelled': return { background: colors.danger[100], color: colors.danger[700] }
+    case 'completed': return { background: colors.ink[100], color: colors.ink[700] }
     case 'pending':
-    default:
-      return { background: '#fff3cd', color: '#856404' }
+    default: return { background: colors.warning[100], color: colors.warning[900] }
   }
 }
 
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : `${s.slice(0, n - 1).trimEnd()}…`
+function truncate(s: string, n: number) { return s.length <= n ? s : `${s.slice(0, n - 1).trimEnd()}…` }
+
+function formatRelative(date: Date) {
+  const diffMs = Date.now() - date.getTime()
+  const mins = Math.floor(diffMs / 60_000)
+  const hours = Math.floor(diffMs / 3_600_000)
+  const days = Math.floor(diffMs / 86_400_000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m`
+  if (hours < 24) return `${hours}h`
+  if (days < 7) return `${days}d`
+  return date.toLocaleDateString()
 }
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
-    backgroundColor: '#f0f4f8',
-    padding: '2rem 1rem',
-    display: 'flex',
-    justifyContent: 'center',
-  },
-  card: {
-    background: '#fff',
-    borderRadius: 12,
-    boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-    padding: '2rem',
-    width: '100%',
-    maxWidth: 860,
-    alignSelf: 'flex-start',
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.xl,
+    padding: '28px 24px',
+    boxShadow: shadows.sm,
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '1.5rem',
+    alignItems: 'flex-start',
+    gap: 16,
+    marginBottom: 24,
   },
-  title: { margin: 0, fontSize: '2rem', fontWeight: 700, color: '#1a202c' },
+  eyebrow: {
+    display: 'inline-block',
+    fontSize: 11, fontWeight: 700,
+    letterSpacing: '0.1em', textTransform: 'uppercase',
+    color: colors.brand[600],
+    marginBottom: 4,
+  },
+  title: { margin: 0, fontSize: 28, fontWeight: 800, letterSpacing: '-0.02em' },
+  subtitle: { margin: '6px 0 0', color: colors.ink[600], maxWidth: 620 },
   refreshBtn: {
-    padding: '0.5rem 1rem',
-    background: '#fff',
-    border: '1px solid #cbd5e0',
-    borderRadius: 6,
-    color: '#2d3748',
-    cursor: 'pointer',
-    fontWeight: 600,
+    padding: '8px 14px',
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.sm,
+    color: colors.ink[700],
+    fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
+
   errorBox: {
-    background: '#fff5f5',
-    border: '1px solid #fed7d7',
-    borderRadius: 6,
-    color: '#c53030',
-    padding: '0.75rem 1rem',
-    marginBottom: '1rem',
+    padding: '12px 16px',
+    background: colors.danger[100],
+    border: `1px solid ${colors.danger[300]}`,
+    color: colors.danger[700],
+    borderRadius: radii.sm,
+    fontSize: 13,
+    marginBottom: 16,
   },
-  emptyState: {
+
+  empty: {
     textAlign: 'center',
-    padding: '3rem 1rem',
-    color: '#4a5568',
+    padding: '64px 24px',
+    border: `1px dashed ${colors.ink[300]}`,
+    borderRadius: radii.lg,
+    background: colors.ink[50],
   },
-  emptyIcon: { fontSize: '3rem', marginBottom: '1rem' },
-  emptyTitle: { margin: '0 0 0.5rem', color: '#2d3748' },
-  emptyText: { margin: '0 auto 1.5rem', maxWidth: 480 },
-  ctaBtn: {
-    padding: '0.75rem 1.5rem',
-    background: '#2563eb',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 6,
-    fontWeight: 600,
-    cursor: 'pointer',
+  emptyIcon: { fontSize: 52, marginBottom: 16 },
+  emptyTitle: { margin: 0, fontSize: 20, fontWeight: 700 },
+  emptyText: { margin: '8px auto 20px', color: colors.ink[600], maxWidth: 440 },
+  cta: {
+    padding: '10px 20px',
+    background: `linear-gradient(135deg, ${colors.brand[500]} 0%, ${colors.accent[500]} 100%)`,
+    color: '#fff', border: 'none',
+    borderRadius: radii.sm, fontSize: 14, fontWeight: 600,
+    cursor: 'pointer', boxShadow: shadows.md,
   },
-  list: { listStyle: 'none', padding: 0, margin: 0 },
+
+  list: { padding: 0, margin: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 },
   listItem: {
     width: '100%',
     display: 'flex',
     alignItems: 'center',
-    gap: '1rem',
-    padding: '1rem',
-    marginBottom: '0.75rem',
-    background: '#f7fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: 8,
+    gap: 16,
+    padding: 16,
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.md,
     cursor: 'pointer',
     textAlign: 'left',
+    transition: 'border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
   },
   sportBadge: {
-    color: '#fff',
-    borderRadius: 6,
-    padding: '0.5rem 0.75rem',
-    fontSize: '0.8rem',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '10px 14px',
+    borderRadius: radii.sm,
+    fontSize: 12,
     fontWeight: 700,
-    minWidth: 90,
-    textAlign: 'center',
+    minWidth: 130,
+    justifyContent: 'center',
   },
-  listMain: { flex: 1, minWidth: 0 },
-  listRow: {
+  sportEmoji: { fontSize: 18 },
+  main: { flex: 1, minWidth: 0 },
+  row: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: '0.5rem',
-    marginBottom: '0.25rem',
+    gap: 8,
+    marginBottom: 4,
   },
-  listTitle: { fontWeight: 600, color: '#1a202c', fontSize: '1rem' },
-  statusChip: {
-    padding: '0.15rem 0.5rem',
-    borderRadius: 12,
-    fontSize: '0.75rem',
-    fontWeight: 600,
-    textTransform: 'capitalize',
+  itemTitle: { margin: 0, fontSize: 15, fontWeight: 700, color: colors.ink[900] },
+  chip: {
+    padding: '2px 10px',
+    borderRadius: 999,
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
   },
-  listMeta: { color: '#718096', fontSize: '0.85rem', marginBottom: '0.25rem' },
-  listPreview: {
-    color: '#2d3748',
-    fontSize: '0.9rem',
+  meta: {
+    color: colors.ink[500],
+    fontSize: 12,
+    display: 'flex',
+    gap: 6,
+    flexWrap: 'wrap',
+    marginBottom: 6,
+  },
+  preview: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    color: colors.ink[700],
+    fontSize: 13,
+  },
+  previewText: {
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
-  listPreviewMuted: {
-    color: '#a0aec0',
-    fontStyle: 'italic',
-    fontSize: '0.9rem',
+  previewStamp: {
+    marginLeft: 'auto',
+    color: colors.ink[400],
+    fontSize: 11,
+    whiteSpace: 'nowrap',
   },
-  chevron: { color: '#a0aec0', fontSize: '2rem', lineHeight: 1 },
+  previewMuted: { color: colors.ink[400], fontStyle: 'italic', fontSize: 13 },
+  chevron: { color: colors.ink[300], fontSize: 28, lineHeight: 1 },
 }

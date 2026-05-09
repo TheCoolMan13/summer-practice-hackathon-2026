@@ -3,15 +3,14 @@
 // Requirements: 10.6, 11.6, 13.1
 
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker } from 'react-leaflet'
 import { LatLng } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from '../../lib/supabaseClient'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import ChatRoom from '../chat/ChatRoom'
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { colors, radii, shadows, themeForSport } from '../../lib/theme'
 
 interface EventDetail {
   id: string
@@ -32,35 +31,15 @@ interface EventDetail {
   source: string
   created_at: string
 }
-
 interface Participant {
   id: string
   user_id: string
   status: 'joined' | 'confirmed' | 'cancelled'
   joined_at: string
   display_name: string
+  avatar_url?: string | null
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
-/**
- * EventDetailPage
- *
- * Displays full event details including:
- *  - All event fields (sport, location, time, description, etc.)
- *  - Participant list with live count updates via Supabase Realtime
- *  - Embedded Leaflet map showing event location
- *  - Cancel participation button
- *
- * Requirements:
- *  10.6 - Cancel participation: UPDATE event_participants.status = 'cancelled'
- *  11.6 - Display event location on embedded map
- *  13.1 - Show event location on map
- *
- * Realtime subscription:
- *  - Subscribes to 'feed' channel for live participant count updates
- *  - Updates participant list when changes occur
- */
 export default function EventDetailPage() {
   const { eventId } = useParams<{ eventId: string }>()
   const navigate = useNavigate()
@@ -75,639 +54,533 @@ export default function EventDetailPage() {
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [cancelSuccess, setCancelSuccess] = useState<string | null>(null)
 
-  // ── Load event and participants ────────────────────────────────────────────
-
   const fetchEventData = async () => {
-    if (!eventId) {
-      setError('Event ID is missing')
-      setLoading(false)
-      return
-    }
-
+    if (!eventId) { setError('Event ID is missing'); setLoading(false); return }
     try {
-      // Get current user
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+      const { data: { user } } = await supabase.auth.getUser()
       setCurrentUserId(user?.id ?? null)
 
-      // Fetch event details with organizer profile
       const { data: eventData, error: eventError } = await supabase
         .from('events')
-        .select(
-          `
-          *,
-          profiles!organizer_id ( display_name )
-        `,
-        )
-        .eq('id', eventId)
-        .single()
-
+        .select(`*, profiles!organizer_id ( display_name )`)
+        .eq('id', eventId).single()
       if (eventError) throw eventError
       if (!eventData) throw new Error('Event not found')
-
-      // Type assertion for the joined relation
-      const rawEvent = eventData as any
-
+      const raw = eventData as any
       setEvent({
-        id: rawEvent.id,
-        sport: rawEvent.sport,
-        title: rawEvent.title,
-        description: rawEvent.description,
-        organizer_id: rawEvent.organizer_id,
-        organizer_display_name: rawEvent.profiles?.display_name ?? 'Unknown',
-        group_id: rawEvent.group_id,
-        location_name: rawEvent.location_name,
-        location_lat: rawEvent.location_lat,
-        location_lng: rawEvent.location_lng,
-        start_time: rawEvent.start_time,
-        participant_limit: rawEvent.participant_limit,
-        skill_requirement: rawEvent.skill_requirement,
-        price_per_person: rawEvent.price_per_person,
-        status: rawEvent.status,
-        source: rawEvent.source,
-        created_at: rawEvent.created_at,
+        id: raw.id, sport: raw.sport, title: raw.title, description: raw.description,
+        organizer_id: raw.organizer_id,
+        organizer_display_name: raw.profiles?.display_name ?? 'Unknown',
+        group_id: raw.group_id,
+        location_name: raw.location_name,
+        location_lat: raw.location_lat, location_lng: raw.location_lng,
+        start_time: raw.start_time, participant_limit: raw.participant_limit,
+        skill_requirement: raw.skill_requirement,
+        price_per_person: raw.price_per_person,
+        status: raw.status, source: raw.source, created_at: raw.created_at,
       })
 
-      // Fetch participants with their profiles
-      const { data: participantsData, error: participantsError } = await supabase
+      const { data: partData } = await supabase
         .from('event_participants')
-        .select(
-          `
-          id,
-          user_id,
-          status,
-          joined_at,
-          profiles!user_id ( display_name )
-        `,
-        )
-        .eq('event_id', eventId)
-        .neq('status', 'cancelled')
+        .select(`id, user_id, status, joined_at, profiles!user_id ( display_name, avatar_url )`)
+        .eq('event_id', eventId).neq('status', 'cancelled')
         .order('joined_at', { ascending: true })
-
-      if (participantsError) throw participantsError
-
-      // Type assertion and map to Participant type
-      const rawParticipants = (participantsData ?? []) as any[]
-      const mappedParticipants: Participant[] = rawParticipants.map((p) => ({
-        id: p.id,
-        user_id: p.user_id,
-        status: p.status,
-        joined_at: p.joined_at,
+      const mapped: Participant[] = ((partData ?? []) as any[]).map((p) => ({
+        id: p.id, user_id: p.user_id, status: p.status, joined_at: p.joined_at,
         display_name: p.profiles?.display_name ?? 'Unknown',
+        avatar_url: p.profiles?.avatar_url ?? null,
       }))
+      setParticipants(mapped)
 
-      setParticipants(mappedParticipants)
-
-      // Check group membership (if this event has an associated group)
-      // so we only render the group chat to actual members (RLS also enforces).
-      if (user && rawEvent.group_id) {
+      if (user && raw.group_id) {
         const { data: membership } = await supabase
           .from('group_members')
           .select('user_id')
-          .eq('group_id', rawEvent.group_id)
-          .eq('user_id', user.id)
+          .eq('group_id', raw.group_id).eq('user_id', user.id)
           .maybeSingle()
         setIsGroupMember(Boolean(membership))
-      } else {
-        setIsGroupMember(false)
-      }
+      } else setIsGroupMember(false)
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to load event details'
-      setError(message)
+      setError(err instanceof Error ? err.message : 'Failed to load event details')
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => {
-    fetchEventData()
-  }, [eventId])
-
-  // ── Realtime subscription for live participant updates ─────────────────────
+  useEffect(() => { fetchEventData() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [eventId])
 
   useEffect(() => {
     if (!eventId) return
-
-    // Subscribe to the 'feed' channel for live updates
-    // (Design specifies 'feed' channel for home feed live updates)
     const channel: RealtimeChannel = supabase
       .channel('feed')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'event_participants',
-          filter: `event_id=eq.${eventId}`,
-        },
-        () => {
-          // Refetch participants when any change occurs
-          fetchEventData()
-        },
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'event_participants', filter: `event_id=eq.${eventId}` },
+        () => fetchEventData(),
       )
       .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [eventId])
-
-  // ── Cancel participation handler ───────────────────────────────────────────
+    return () => { supabase.removeChannel(channel) }
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [eventId])
 
   const handleCancelParticipation = async () => {
     if (!currentUserId || !eventId) return
-
-    setCancelError(null)
-    setCancelSuccess(null)
-    setCancellingParticipation(true)
-
+    setCancelError(null); setCancelSuccess(null); setCancellingParticipation(true)
     try {
-      // Requirement 10.6: UPDATE event_participants.status = 'cancelled'
-      const { error: updateError } = await supabase
+      const { error } = await supabase
         .from('event_participants')
         .update({ status: 'cancelled' })
-        .eq('event_id', eventId)
-        .eq('user_id', currentUserId)
-
-      if (updateError) throw updateError
-
-      setCancelSuccess('Successfully cancelled your participation')
-
-      // Refresh participant list
+        .eq('event_id', eventId).eq('user_id', currentUserId)
+      if (error) throw error
+      setCancelSuccess('Participation cancelled.')
       await fetchEventData()
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to cancel participation'
-      setCancelError(message)
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel participation')
     } finally {
       setCancellingParticipation(false)
     }
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   if (loading) {
-    return (
-      <div style={styles.loadingContainer} aria-live="polite" aria-label="Loading">
-        Loading event details…
-      </div>
-    )
+    return <div style={styles.centered} aria-live="polite">Loading event…</div>
   }
-
   if (error || !event) {
     return (
-      <div style={styles.errorContainer}>
-        <h1 style={styles.errorTitle}>Error</h1>
-        <p style={styles.errorText}>{error ?? 'Event not found'}</p>
-        <button style={styles.backButton} onClick={() => navigate('/feed')}>
-          Back to Feed
-        </button>
+      <div style={styles.centered}>
+        <h1>Couldn't load event</h1>
+        <p style={{ color: colors.ink[600] }}>{error ?? 'Event not found'}</p>
+        <button style={styles.secondaryBtn} onClick={() => navigate('/feed')}>← Back to feed</button>
       </div>
     )
   }
 
   const startDate = new Date(event.start_time)
-  const activeParticipantCount = participants.length
+  const activeCount = participants.length
   const isUserParticipant = participants.some((p) => p.user_id === currentUserId)
-  const isEventFull = activeParticipantCount >= event.participant_limit
+  const isFull = activeCount >= event.participant_limit
+  const pct = Math.min(100, Math.round((activeCount / event.participant_limit) * 100))
+  const theme = themeForSport(event.sport)
 
   return (
-    <main style={styles.container}>
-      <div style={styles.card}>
-        {/* Header */}
-        <div style={styles.header}>
-          <button style={styles.backButton} onClick={() => navigate('/feed')}>
-            ← Back to Feed
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Hero */}
+      <section
+        style={{
+          ...styles.hero,
+          background: `${theme.bg}, ${colors.surface}`,
+        }}
+        className="s2m-fade-in"
+      >
+        <div style={styles.heroTop}>
+          <button style={styles.backBtn} onClick={() => navigate('/feed')}>
+            ← Back
           </button>
-          <span
-            style={{
-              ...styles.sportBadge,
-              backgroundColor: getSportColor(event.sport),
-            }}
-          >
-            {event.sport.toUpperCase()}
+          <span style={{ ...styles.sportChip, background: 'rgba(255,255,255,0.7)', color: theme.text }}>
+            <span aria-hidden="true" style={{ fontSize: 18 }}>{theme.emoji}</span>
+            {event.sport.charAt(0).toUpperCase() + event.sport.slice(1)}
           </span>
         </div>
 
-        {/* Title */}
-        <h1 style={styles.title}>
+        <h1 style={styles.heroTitle}>
           {event.title || `${event.sport.charAt(0).toUpperCase() + event.sport.slice(1)} Match`}
         </h1>
+        <p style={styles.heroMeta}>Organized by {event.organizer_display_name}</p>
 
-        {/* Status messages */}
-        {cancelSuccess && (
-          <div style={styles.successBox} role="alert">
-            {cancelSuccess}
+        <div style={styles.heroGrid}>
+          <Stat label="When" value={startDate.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} icon="📅" />
+          {event.location_name && <Stat label="Where" value={event.location_name} icon="📍" />}
+          <Stat label="Status" value={event.status.charAt(0).toUpperCase() + event.status.slice(1)} icon="🔖" />
+          <Stat label="Source" value={event.source === 'manual' ? 'Manual' : 'Auto-matched'} icon="⚡" />
+        </div>
+
+        <div style={styles.capacityCard}>
+          <div style={styles.capacityRow}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>
+              {activeCount} / {event.participant_limit} joined
+              {isFull && <span style={styles.fullPill}>FULL</span>}
+            </span>
+            <span style={{ fontSize: 12, color: colors.ink[500], fontWeight: 700 }}>{pct}%</span>
           </div>
-        )}
-        {cancelError && (
-          <div style={styles.errorBox} role="alert">
-            {cancelError}
+          <div style={styles.capacityTrack}>
+            <div style={{ ...styles.capacityFill, width: `${pct}%`, background: theme.solid }} />
           </div>
-        )}
+        </div>
+      </section>
 
-        {/* Event details section */}
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Event Details</h2>
+      {cancelSuccess && <div style={styles.alertSuccess} role="status">{cancelSuccess}</div>}
+      {cancelError && <div style={styles.alertError} role="alert">{cancelError}</div>}
 
-          <div style={styles.detailGrid}>
-            <div style={styles.detailItem}>
-              <span style={styles.detailLabel}>📅 When:</span>
-              <span style={styles.detailValue}>{startDate.toLocaleString()}</span>
-            </div>
-
-            {event.location_name && (
-              <div style={styles.detailItem}>
-                <span style={styles.detailLabel}>📍 Where:</span>
-                <span style={styles.detailValue}>{event.location_name}</span>
-              </div>
-            )}
-
-            <div style={styles.detailItem}>
-              <span style={styles.detailLabel}>👤 Organizer:</span>
-              <span style={styles.detailValue}>{event.organizer_display_name}</span>
-            </div>
-
-            <div style={styles.detailItem}>
-              <span style={styles.detailLabel}>👥 Participants:</span>
-              <span style={styles.detailValue}>
-                {activeParticipantCount} / {event.participant_limit}
-                {isEventFull && <span style={styles.fullBadge}> FULL</span>}
-              </span>
-            </div>
-
+      {/* Split layout: details + map */}
+      <div style={styles.splitGrid}>
+        {/* Left: details */}
+        <section style={styles.panel}>
+          <h2 style={styles.panelTitle}>Event details</h2>
+          <ul style={styles.detailList}>
             {event.skill_requirement && (
-              <div style={styles.detailItem}>
-                <span style={styles.detailLabel}>🎯 Skill Level:</span>
-                <span style={styles.detailValue}>
-                  {event.skill_requirement.charAt(0).toUpperCase() +
-                    event.skill_requirement.slice(1)}
-                </span>
-              </div>
+              <DetailRow icon="🎯" label="Skill" value={event.skill_requirement} />
             )}
-
-            {event.price_per_person !== null && event.price_per_person > 0 && (
-              <div style={styles.detailItem}>
-                <span style={styles.detailLabel}>💰 Cost:</span>
-                <span style={styles.detailValue}>€{event.price_per_person.toFixed(2)} per person</span>
-              </div>
+            {event.price_per_person != null && event.price_per_person > 0 && (
+              <DetailRow icon="💰" label="Cost" value={`€${event.price_per_person.toFixed(2)} / person`} />
             )}
-
-            <div style={styles.detailItem}>
-              <span style={styles.detailLabel}>📋 Status:</span>
-              <span style={styles.detailValue}>
-                {event.status.charAt(0).toUpperCase() + event.status.slice(1)}
-              </span>
-            </div>
-
-            <div style={styles.detailItem}>
-              <span style={styles.detailLabel}>🔖 Type:</span>
-              <span style={styles.detailValue}>
-                {event.source === 'manual' ? 'Manually Created' : 'Auto-Matched'}
-              </span>
-            </div>
-          </div>
-
+            <DetailRow icon="👤" label="Organizer" value={event.organizer_display_name} />
+          </ul>
           {event.description && (
             <div style={styles.descriptionBox}>
-              <h3 style={styles.descriptionTitle}>Description</h3>
-              <p style={styles.descriptionText}>{event.description}</p>
+              <h3 style={{ margin: '0 0 6px', fontSize: 13, fontWeight: 700, color: colors.ink[700] }}>About</h3>
+              <p style={{ margin: 0, color: colors.ink[700], lineHeight: 1.55, fontSize: 14 }}>
+                {event.description}
+              </p>
             </div>
+          )}
+
+          {isUserParticipant && (
+            <button
+              onClick={handleCancelParticipation}
+              disabled={cancellingParticipation}
+              style={{
+                ...styles.cancelBtn,
+                ...(cancellingParticipation ? { opacity: 0.7, cursor: 'wait' } : {}),
+              }}
+            >
+              {cancellingParticipation ? 'Cancelling…' : 'Cancel my participation'}
+            </button>
           )}
         </section>
 
-        {/* Map section (Requirements 11.6, 13.1) */}
+        {/* Right: map */}
         {event.location_lat !== null && event.location_lng !== null && (
-          <section style={styles.section}>
-            <h2 style={styles.sectionTitle}>Location Map</h2>
+          <section style={{ ...styles.panel, padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px 0' }}>
+              <h2 style={styles.panelTitle}>Location</h2>
+            </div>
             <div style={styles.mapContainer}>
               <MapContainer
                 center={[event.location_lat, event.location_lng]}
                 zoom={15}
-                style={{ height: '400px', width: '100%', borderRadius: '8px' }}
+                style={{ height: 360, width: '100%' }}
               >
                 <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  attribution='&copy; OpenStreetMap contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <Marker position={new LatLng(event.location_lat, event.location_lng)} />
               </MapContainer>
             </div>
-            <p style={styles.coordinatesText}>
-              Coordinates: {event.location_lat.toFixed(5)}, {event.location_lng.toFixed(5)}
-            </p>
-          </section>
-        )}
-
-        {/* Participants section */}
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>
-            Participants ({activeParticipantCount}/{event.participant_limit})
-          </h2>
-
-          {participants.length === 0 ? (
-            <p style={styles.emptyText}>No participants yet. Be the first to join!</p>
-          ) : (
-            <ul style={styles.participantList}>
-              {participants.map((participant) => (
-                <li key={participant.id} style={styles.participantItem}>
-                  <span style={styles.participantName}>
-                    {participant.display_name}
-                    {participant.user_id === event.organizer_id && (
-                      <span style={styles.organizerBadge}> (Organizer)</span>
-                    )}
-                    {participant.user_id === currentUserId && (
-                      <span style={styles.youBadge}> (You)</span>
-                    )}
-                  </span>
-                  <span style={styles.participantStatus}>
-                    {participant.status === 'confirmed' ? '✓ Confirmed' : 'Joined'}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Group chat (Requirements 9.1, 9.2, 9.6) */}
-        {event.group_id && isGroupMember && (
-          <section style={styles.section}>
-            <h2 style={styles.sectionTitle}>Group Chat</h2>
-            <p style={styles.chatHint}>
-              Coordinate with your group — messages are delivered in real time to every member.
-            </p>
-            <div style={styles.chatWrapper}>
-              <ChatRoom
-                groupId={event.group_id}
-                onLeave={() => navigate('/feed')}
-              />
+            <div style={styles.mapFooter}>
+              <span style={{ color: colors.ink[600], fontSize: 12 }}>
+                {event.location_lat.toFixed(4)}, {event.location_lng.toFixed(4)}
+              </span>
             </div>
           </section>
         )}
-
-        {/* Cancel participation button (Requirement 10.6) */}
-        {isUserParticipant && (
-          <section style={styles.section}>
-            <button
-              onClick={handleCancelParticipation}
-              disabled={cancellingParticipation}
-              style={{
-                ...styles.cancelButton,
-                ...(cancellingParticipation ? styles.cancelButtonDisabled : {}),
-              }}
-              aria-busy={cancellingParticipation}
-            >
-              {cancellingParticipation ? 'Cancelling…' : 'Cancel My Participation'}
-            </button>
-            <p style={styles.cancelHint}>
-              This will update your status to cancelled and free up a spot for others.
-            </p>
-          </section>
-        )}
       </div>
-    </main>
+
+      {/* Participants */}
+      <section style={styles.panel}>
+        <div style={styles.panelHeader}>
+          <h2 style={styles.panelTitle}>Participants ({activeCount}/{event.participant_limit})</h2>
+        </div>
+        {participants.length === 0 ? (
+          <p style={{ color: colors.ink[500], fontStyle: 'italic' }}>No participants yet. Be the first to join!</p>
+        ) : (
+          <ul style={styles.participantGrid}>
+            {participants.map((p) => (
+              <li key={p.id} style={styles.participant}>
+                <div style={styles.participantAvatar} aria-hidden="true">
+                  {p.avatar_url ? (
+                    <img src={p.avatar_url} alt="" style={styles.participantImg} />
+                  ) : (
+                    <span>{p.display_name.slice(0, 1).toUpperCase()}</span>
+                  )}
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={styles.participantName}>
+                    {p.display_name}
+                  </div>
+                  <div style={styles.participantRole}>
+                    {p.user_id === event.organizer_id && 'Organizer'}
+                    {p.user_id === currentUserId && (
+                      <span style={styles.youBadge}>{p.user_id === event.organizer_id ? ' · ' : ''}You</span>
+                    )}
+                    {p.status === 'confirmed' && <span style={styles.confirmedBadge}> · Confirmed</span>}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Group chat */}
+      {event.group_id && isGroupMember && (
+        <section style={styles.panel}>
+          <div style={styles.panelHeader}>
+            <h2 style={styles.panelTitle}>Group chat</h2>
+            <button style={styles.linkBtn} onClick={() => navigate(`/groups/${event.group_id}`)}>
+              Open in full view →
+            </button>
+          </div>
+          <p style={{ color: colors.ink[600], fontSize: 13, margin: '0 0 12px' }}>
+            Coordinate with your teammates — messages are delivered in real time.
+          </p>
+          <div style={styles.chatWrapper}>
+            <ChatRoom groupId={event.group_id} onLeave={() => navigate('/feed')} />
+          </div>
+        </section>
+      )}
+    </div>
   )
 }
 
-// ─── Helper functions ─────────────────────────────────────────────────────────
+// ────────────── Small building blocks ──────────────
 
-function getSportColor(sport: string): string {
-  const colors: Record<string, string> = {
-    football: '#28a745',
-    basketball: '#fd7e14',
-    tennis: '#ffc107',
-    volleyball: '#17a2b8',
-  }
-  return colors[sport.toLowerCase()] ?? '#007bff'
+function Stat({ label, value, icon }: { label: string; value: string; icon: string }) {
+  return (
+    <div style={styles.stat}>
+      <span style={styles.statIcon} aria-hidden="true">{icon}</span>
+      <div style={{ minWidth: 0 }}>
+        <div style={styles.statLabel}>{label}</div>
+        <div style={styles.statValue}>{value}</div>
+      </div>
+    </div>
+  )
 }
 
-// ─── Inline styles ────────────────────────────────────────────────────────────
+function DetailRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <li style={styles.detailRow}>
+      <span aria-hidden="true" style={{ fontSize: 16 }}>{icon}</span>
+      <span style={styles.detailLabel}>{label}</span>
+      <span style={styles.detailValue}>{value}</span>
+    </li>
+  )
+}
+
+// ────────────── Styles ──────────────
 
 const styles: Record<string, React.CSSProperties> = {
-  loadingContainer: {
-    alignItems: 'center',
-    display: 'flex',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    color: '#718096',
-    fontSize: '1rem',
-  },
-  errorContainer: {
-    alignItems: 'center',
+  centered: {
+    minHeight: '70vh',
     display: 'flex',
     flexDirection: 'column',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    padding: '2rem',
-  },
-  errorTitle: {
-    fontSize: '2rem',
-    fontWeight: 700,
-    color: '#e53e3e',
-    marginBottom: '1rem',
-  },
-  errorText: {
-    fontSize: '1rem',
-    color: '#718096',
-    marginBottom: '2rem',
-  },
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f0f4f8',
-    padding: '2rem 1rem',
-    display: 'flex',
-    justifyContent: 'center',
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: '12px',
-    boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-    padding: '2.5rem 2rem',
-    width: '100%',
-    maxWidth: '900px',
-    alignSelf: 'flex-start',
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: '1.5rem',
-  },
-  backButton: {
-    backgroundColor: 'transparent',
-    border: '1px solid #cbd5e0',
-    borderRadius: '6px',
-    color: '#2d3748',
-    cursor: 'pointer',
-    fontSize: '0.9rem',
-    fontWeight: 600,
-    padding: '0.5rem 1rem',
-    transition: 'background-color 0.15s',
-  },
-  sportBadge: {
-    padding: '0.5rem 1rem',
-    color: '#fff',
-    borderRadius: '20px',
-    fontSize: '0.85rem',
-    fontWeight: 'bold',
-  },
-  title: {
-    margin: '0 0 1.5rem',
-    fontSize: '2rem',
-    fontWeight: 700,
-    color: '#1a202c',
-  },
-  section: {
-    marginBottom: '2rem',
-    paddingBottom: '2rem',
-    borderBottom: '1px solid #e2e8f0',
-  },
-  sectionTitle: {
-    fontSize: '1.25rem',
-    fontWeight: 600,
-    color: '#2d3748',
-    marginBottom: '1rem',
-  },
-  detailGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: '1rem',
-  },
-  detailItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.25rem',
-  },
-  detailLabel: {
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    color: '#718096',
-  },
-  detailValue: {
-    fontSize: '1rem',
-    color: '#2d3748',
-  },
-  fullBadge: {
-    color: '#e53e3e',
-    fontWeight: 600,
-    fontSize: '0.85rem',
-  },
-  descriptionBox: {
-    marginTop: '1.5rem',
-    padding: '1rem',
-    backgroundColor: '#f7fafc',
-    borderRadius: '8px',
-    border: '1px solid #e2e8f0',
-  },
-  descriptionTitle: {
-    fontSize: '1rem',
-    fontWeight: 600,
-    color: '#2d3748',
-    marginBottom: '0.5rem',
-  },
-  descriptionText: {
-    fontSize: '0.95rem',
-    color: '#4a5568',
-    lineHeight: '1.6',
-    margin: 0,
-  },
-  mapContainer: {
-    borderRadius: '8px',
-    overflow: 'hidden',
-    border: '1px solid #cbd5e0',
-  },
-  coordinatesText: {
-    color: '#718096',
-    fontSize: '0.8rem',
-    margin: '0.5rem 0 0',
-    fontFamily: 'monospace',
-  },
-  participantList: {
-    listStyle: 'none',
-    padding: 0,
-    margin: 0,
-  },
-  participantItem: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '0.75rem 1rem',
-    backgroundColor: '#f7fafc',
-    borderRadius: '6px',
-    marginBottom: '0.5rem',
-    border: '1px solid #e2e8f0',
-  },
-  participantName: {
-    fontSize: '1rem',
-    color: '#2d3748',
-    fontWeight: 500,
-  },
-  participantStatus: {
-    fontSize: '0.875rem',
-    color: '#718096',
-  },
-  organizerBadge: {
-    color: '#3182ce',
-    fontWeight: 600,
-    fontSize: '0.85rem',
-  },
-  youBadge: {
-    color: '#38a169',
-    fontWeight: 600,
-    fontSize: '0.85rem',
-  },
-  emptyText: {
-    color: '#718096',
-    fontSize: '0.95rem',
-    fontStyle: 'italic',
-  },
-  cancelButton: {
-    backgroundColor: '#e53e3e',
-    border: 'none',
-    borderRadius: '6px',
-    color: '#ffffff',
-    cursor: 'pointer',
-    fontSize: '1rem',
-    fontWeight: 600,
-    padding: '0.75rem 1.5rem',
-    width: '100%',
-    transition: 'background-color 0.15s',
-  },
-  cancelButtonDisabled: {
-    backgroundColor: '#fc8181',
-    cursor: 'not-allowed',
-  },
-  cancelHint: {
-    color: '#718096',
-    fontSize: '0.85rem',
-    marginTop: '0.5rem',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
     textAlign: 'center',
   },
-  successBox: {
-    backgroundColor: '#d4edda',
-    border: '1px solid #c3e6cb',
-    borderRadius: '6px',
-    color: '#155724',
-    fontSize: '0.875rem',
-    marginBottom: '1rem',
-    padding: '0.75rem 1rem',
+  secondaryBtn: {
+    padding: '10px 16px',
+    background: colors.surface,
+    border: `1px solid ${colors.ink[300]}`,
+    borderRadius: radii.sm,
+    color: colors.ink[700],
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
   },
-  errorBox: {
-    backgroundColor: '#fff5f5',
-    border: '1px solid #fed7d7',
-    borderRadius: '6px',
-    color: '#c53030',
-    fontSize: '0.875rem',
-    marginBottom: '1rem',
-    padding: '0.75rem 1rem',
+
+  hero: {
+    position: 'relative',
+    padding: 28,
+    borderRadius: radii.xl,
+    border: `1px solid ${colors.ink[200]}`,
+    boxShadow: shadows.sm,
+    overflow: 'hidden',
   },
+  heroTop: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  backBtn: {
+    padding: '8px 12px',
+    background: 'rgba(255,255,255,0.8)',
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.sm,
+    color: colors.ink[800],
+    fontSize: 13, fontWeight: 600, cursor: 'pointer',
+    backdropFilter: 'blur(6px)',
+  },
+  sportChip: {
+    padding: '6px 14px',
+    borderRadius: 999,
+    fontSize: 13, fontWeight: 700,
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+  },
+  heroTitle: {
+    margin: '0 0 4px',
+    fontSize: 'clamp(1.6rem, 3.2vw, 2.2rem)',
+    letterSpacing: '-0.02em',
+    color: colors.ink[900],
+  },
+  heroMeta: { margin: 0, color: colors.ink[600], fontSize: 14 },
+  heroGrid: {
+    marginTop: 22,
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+    gap: 12,
+  },
+  stat: {
+    display: 'flex', alignItems: 'center', gap: 12,
+    padding: 12,
+    background: 'rgba(255,255,255,0.8)',
+    backdropFilter: 'blur(6px)',
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.md,
+  },
+  statIcon: { fontSize: 20, width: 36, height: 36, borderRadius: radii.sm,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: colors.ink[50], flexShrink: 0 },
+  statLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+    textTransform: 'uppercase', color: colors.ink[500] },
+  statValue: { fontSize: 14, fontWeight: 600, color: colors.ink[900],
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+
+  capacityCard: {
+    marginTop: 18,
+    padding: 16,
+    background: 'rgba(255,255,255,0.8)',
+    backdropFilter: 'blur(6px)',
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.md,
+  },
+  capacityRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 8, gap: 8,
+  },
+  capacityTrack: { height: 8, borderRadius: 999, background: colors.ink[100] },
+  capacityFill: { height: '100%', borderRadius: 999, transition: 'width 0.4s var(--ease-out)' },
+  fullPill: {
+    marginLeft: 8,
+    padding: '2px 8px',
+    background: colors.danger[100], color: colors.danger[700],
+    borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
+  },
+
+  alertSuccess: {
+    padding: '12px 16px',
+    background: colors.success[100],
+    color: colors.success[900],
+    border: `1px solid ${colors.success[300]}`,
+    borderRadius: radii.md,
+    fontSize: 14, fontWeight: 500,
+  },
+  alertError: {
+    padding: '12px 16px',
+    background: colors.danger[100],
+    color: colors.danger[900],
+    border: `1px solid ${colors.danger[300]}`,
+    borderRadius: radii.md,
+    fontSize: 14, fontWeight: 500,
+  },
+
+  splitGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+    gap: 20,
+  },
+
+  panel: {
+    padding: 20,
+    background: colors.surface,
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.xl,
+    boxShadow: shadows.sm,
+  },
+  panelHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  panelTitle: {
+    margin: 0,
+    fontSize: 16,
+    fontWeight: 700,
+    color: colors.ink[900],
+  },
+  linkBtn: {
+    padding: '6px 10px',
+    background: 'transparent',
+    color: colors.brand[600],
+    border: 'none',
+    fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  },
+
+  detailList: { listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 4 },
+  detailRow: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '10px 12px',
+    borderRadius: radii.sm,
+    background: colors.ink[50],
+    fontSize: 14,
+  },
+  detailLabel: { color: colors.ink[600], fontWeight: 600, minWidth: 80, fontSize: 13 },
+  detailValue: { color: colors.ink[900], fontWeight: 600 },
+  descriptionBox: {
+    marginTop: 14,
+    padding: 14,
+    background: colors.ink[50],
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.sm,
+  },
+  cancelBtn: {
+    marginTop: 16,
+    width: '100%',
+    padding: '12px 16px',
+    background: colors.danger[500],
+    color: '#fff',
+    border: 'none',
+    borderRadius: radii.sm,
+    fontSize: 14, fontWeight: 600, cursor: 'pointer',
+    boxShadow: shadows.sm,
+  },
+
+  mapContainer: {
+    overflow: 'hidden',
+    borderTop: `1px solid ${colors.ink[200]}`,
+    marginTop: 12,
+  },
+  mapFooter: {
+    padding: '10px 20px',
+    borderTop: `1px solid ${colors.ink[200]}`,
+    background: colors.ink[50],
+  },
+
+  participantGrid: {
+    listStyle: 'none',
+    padding: 0, margin: 0,
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+    gap: 10,
+  },
+  participant: {
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: 10,
+    background: colors.ink[50],
+    border: `1px solid ${colors.ink[200]}`,
+    borderRadius: radii.sm,
+  },
+  participantAvatar: {
+    width: 36, height: 36, borderRadius: '50%',
+    background: `linear-gradient(135deg, ${colors.brand[500]} 0%, ${colors.accent[500]} 100%)`,
+    color: '#fff',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 14, fontWeight: 700,
+    overflow: 'hidden',
+    flexShrink: 0,
+  },
+  participantImg: { width: '100%', height: '100%', objectFit: 'cover' },
+  participantName: {
+    fontSize: 14, fontWeight: 600, color: colors.ink[900],
+    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+  },
+  participantRole: { fontSize: 12, color: colors.ink[500] },
+  youBadge: { color: colors.success[700], fontWeight: 700 },
+  confirmedBadge: { color: colors.brand[600], fontWeight: 600 },
+
   chatWrapper: {
-    height: '600px',
+    height: 600,
     maxHeight: '70vh',
-  },
-  chatHint: {
-    color: '#718096',
-    fontSize: '0.9rem',
-    margin: '0 0 1rem',
   },
 }
