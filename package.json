@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "start": "serve -s dist",
     "test": "vitest --run",
     "test:watch": "vitest"
   },
@@ -16,7 +17,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
-    "react-router-dom": "^6.27.0"
+    "react-router-dom": "^6.27.0",
+    "serve": "^14.2.6"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
