@@ -10,6 +10,8 @@ import ProfilePage from './features/profile/ProfilePage'
 import FeedPage from './features/feed/FeedPage'
 import CreateEventPage from './features/events/CreateEventPage'
 import EventDetailPage from './features/events/EventDetailPage'
+import MyGroupsPage from './features/groups/MyGroupsPage'
+import GroupChatPage from './features/groups/GroupChatPage'
 
 /**
  * App
@@ -87,6 +89,26 @@ export default function App() {
               <AuthGuard message="Log in to view event details.">
                 <Layout>
                   <EventDetailPage />
+                </Layout>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/groups"
+            element={
+              <AuthGuard message="Log in to see your group chats.">
+                <Layout>
+                  <MyGroupsPage />
+                </Layout>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path="/groups/:groupId"
+            element={
+              <AuthGuard message="Log in to open this group chat.">
+                <Layout>
+                  <GroupChatPage />
                 </Layout>
               </AuthGuard>
             }

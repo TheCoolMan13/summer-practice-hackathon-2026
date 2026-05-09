@@ -76,6 +76,14 @@ export default function Navigation() {
           </button>
           <button
             style={styles.navLink}
+            onClick={() => navigate('/groups')}
+            onMouseEnter={(e) => (e.currentTarget.style.color = '#2563eb')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = '#4b5563')}
+          >
+            Groups
+          </button>
+          <button
+            style={styles.navLink}
             onClick={() => navigate('/profile')}
             onMouseEnter={(e) => (e.currentTarget.style.color = '#2563eb')}
             onMouseLeave={(e) => (e.currentTarget.style.color = '#4b5563')}

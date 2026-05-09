@@ -9,6 +9,7 @@ import { LatLng } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from '../../lib/supabaseClient'
 import type { RealtimeChannel } from '@supabase/supabase-js'
+import ChatRoom from '../chat/ChatRoom'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,7 @@ export default function EventDetailPage() {
   const [event, setEvent] = useState<EventDetail | null>(null)
   const [participants, setParticipants] = useState<Participant[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [isGroupMember, setIsGroupMember] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cancellingParticipation, setCancellingParticipation] = useState(false)
@@ -156,6 +158,20 @@ export default function EventDetailPage() {
       }))
 
       setParticipants(mappedParticipants)
+
+      // Check group membership (if this event has an associated group)
+      // so we only render the group chat to actual members (RLS also enforces).
+      if (user && rawEvent.group_id) {
+        const { data: membership } = await supabase
+          .from('group_members')
+          .select('user_id')
+          .eq('group_id', rawEvent.group_id)
+          .eq('user_id', user.id)
+          .maybeSingle()
+        setIsGroupMember(Boolean(membership))
+      } else {
+        setIsGroupMember(false)
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to load event details'
       setError(message)
@@ -413,6 +429,22 @@ export default function EventDetailPage() {
           )}
         </section>
 
+        {/* Group chat (Requirements 9.1, 9.2, 9.6) */}
+        {event.group_id && isGroupMember && (
+          <section style={styles.section}>
+            <h2 style={styles.sectionTitle}>Group Chat</h2>
+            <p style={styles.chatHint}>
+              Coordinate with your group — messages are delivered in real time to every member.
+            </p>
+            <div style={styles.chatWrapper}>
+              <ChatRoom
+                groupId={event.group_id}
+                onLeave={() => navigate('/feed')}
+              />
+            </div>
+          </section>
+        )}
+
         {/* Cancel participation button (Requirement 10.6) */}
         {isUserParticipant && (
           <section style={styles.section}>
@@ -668,5 +700,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '0.875rem',
     marginBottom: '1rem',
     padding: '0.75rem 1rem',
+  },
+  chatWrapper: {
+    height: '600px',
+    maxHeight: '70vh',
+  },
+  chatHint: {
+    color: '#718096',
+    fontSize: '0.9rem',
+    margin: '0 0 1rem',
   },
 }
