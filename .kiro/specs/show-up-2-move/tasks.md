@@ -86,7 +86,7 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Use `fc.date({max: pastDate})` to generate already-expired records and assert they do not appear in matching engine candidate queries
     - **Validates: Requirements 6.1, 6.4, 16.5**
 
-- [~] 7. Edge Function: `expire-availability`
+- [x] 7. Edge Function: `expire-availability`
   - Create `supabase/functions/expire-availability/index.ts`
   - Query `availability` for records where `expires_at <= NOW()` and `is_available = true`; set `is_available = false`
   - Delete corresponding rows from `matching_queue`
@@ -94,7 +94,7 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
   - Register pg_cron schedule: every 1 minute
   - _Requirements: 6.4, 16.5_
 
-- [ ] 8. Edge Function: `match-users` — core matching engine
+- [x] 8. Edge Function: `match-users` — core matching engine
   - [x] 8.1 Implement candidate selection and grouping logic
     - Create `supabase/functions/match-users/index.ts`
     - Query active available users grouped by sport; apply `ST_DWithin(10km)` proximity filter using PostGIS
@@ -102,17 +102,17 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Group candidates into groups satisfying `SPORT_SIZES[sport].min ≤ size ≤ SPORT_SIZES[sport].max`
     - Users below `min_size` threshold go into `matching_queue`; insert "Matching in progress" notification for queued users
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.6, 7.7_
-  - [~] 8.2 Implement AI compatibility scoring integration
+  - [x] 8.2 Implement AI compatibility scoring integration
     - Call the AI microservice `POST /profile-compatibility` for candidate pairs when AI is available
     - Use scores as a secondary ranking signal; fall back gracefully (proceed without scores) when AI is unavailable
     - _Requirements: 7.5, 14.3_
-  - [~] 8.3 Implement group creation, event creation, and notification dispatch
+  - [x] 8.3 Implement group creation, event creation, and notification dispatch
     - INSERT into `groups`, `group_members`, `events` (source='matched'), and `notifications` for all members
     - INSERT system message "Group created" into `messages`
     - Trigger captain selection (see task 9)
     - Complete all inserts within a single database transaction; target ≤ 5 seconds total
     - _Requirements: 7.8, 8.1, 9.1, 9.3, 12.1_
-  - [~] 8.4 Register pg_cron schedule for `match-users`
+  - [x] 8.4 Register pg_cron schedule for `match-users`
     - Schedule `match-users` to run every 5 minutes via pg_cron
     - _Requirements: 7.1_
   - [ ]* 8.5 Write property test for matching group size bounds (Property 2)
@@ -122,8 +122,8 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Assert that when candidate count < `min_size(sport)`, no group is created and all candidates are in the pending queue
     - **Validates: Requirements 7.1, 7.2, 7.6**
 
-- [ ] 9. Edge Function: captain selection logic
-  - [~] 9.1 Implement weighted random captain selection
+- [x] 9. Edge Function: captain selection logic
+  - [x] 9.1 Implement weighted random captain selection
     - Extract captain selection into `supabase/functions/match-users/captainSelector.ts`
     - Query `captain_history` for each candidate; reduce selection weight for users appearing in their last 3 entries
     - INSERT into `captain_history` and UPDATE `groups.captain_id`
@@ -137,7 +137,7 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Assert users in the last 3 captain_history entries have strictly lower selection probability than users with no recent history
     - **Validates: Requirements 8.1, 8.2**
 
-- [~] 10. Edge Function: `reassign-captain`
+- [x] 10. Edge Function: `reassign-captain`
   - Create `supabase/functions/reassign-captain/index.ts`
   - Query groups where `status='pending'` and captain has `confirmed=false` and `created_at < NOW() - interval '2 hours'`
   - Select eligible replacement (not in last 3 `captain_history` entries for that user)
@@ -145,18 +145,18 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
   - Register pg_cron schedule: every 15 minutes
   - _Requirements: 8.4, 16.4_
 
-- [ ] 11. Home feed — event discovery and filtering
-  - [~] 11.1 Implement feed data layer and PostgREST queries
+- [x] 11. Home feed — event discovery and filtering
+  - [x] 11.1 Implement feed data layer and PostgREST queries
     - Create `src/features/feed/useFeed.ts` hook that queries the `events` table with PostgREST filters
     - Support sport filter, distance filter (PostGIS `ST_DWithin`), and time window filter applied simultaneously
     - Return events sorted by `start_time ASC`; include participant count, group size, organizer display name, and user participation status
     - _Requirements: 5.1, 5.2, 5.3, 5.4_
-  - [~] 11.2 Implement feed UI with Realtime subscription
+  - [x] 11.2 Implement feed UI with Realtime subscription
     - Create `src/features/feed/FeedPage.tsx` with filter controls and event cards
     - Subscribe to `feed` Realtime channel (DB Changes on `events`) to receive live updates
     - Display empty state message when no events match filters
     - _Requirements: 5.1, 5.5_
-  - [~] 11.3 Implement "Join Event" action
+  - [x] 11.3 Implement "Join Event" action
     - On "Join" tap, INSERT into `event_participants`; handle full-event rejection (participant_limit reached) by showing "Event is full"
     - Notify organizer via notification INSERT
     - _Requirements: 5.6, 10.4, 10.5_
@@ -172,33 +172,33 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Assert join attempts when count equals limit are rejected and event is marked full
     - **Validates: Requirements 10.5**
 
-- [~] 12. Manual event creation
+- [x] 12. Manual event creation
   - Create `src/features/events/CreateEventPage.tsx` with required fields (sport, location, start_time, participant_limit) and optional fields (skill_requirement, price_per_person, description ≤ 500 chars)
   - INSERT into `events` with `organizer_id = auth.uid()` and `source='manual'`
   - Display event location on embedded Leaflet map
   - _Requirements: 10.1, 10.2, 10.3, 11.6_
 
-- [~] 13. Event detail page and map view
+- [x] 13. Event detail page and map view
   - Create `src/features/events/EventDetailPage.tsx` showing all event fields, participant list, and embedded Leaflet map
   - Subscribe to `feed` Realtime channel for live participant count updates
   - Implement cancel participation: UPDATE `event_participants.status = 'cancelled'` and refresh count
   - _Requirements: 10.6, 11.6, 13.1_
 
-- [~] 14. Checkpoint — core data layer and auth complete
+- [x] 14. Checkpoint — core data layer and auth complete
   - Ensure all migrations run cleanly against local Supabase (`supabase db reset`)
   - Ensure all tests written so far pass (`vitest --run`)
   - Ask the user if questions arise before proceeding to real-time and chat features.
 
 - [ ] 15. Group chat — real-time messaging
-  - [~] 15.1 Implement chat message persistence and retrieval
+  - [x] 15.1 Implement chat message persistence and retrieval
     - Create `src/features/chat/useGroupChat.ts` hook that fetches the last 50 messages from `messages` ordered by `created_at ASC`
     - INSERT new messages with `sender_id = auth.uid()` and `type='user'`
     - _Requirements: 9.2, 9.6, 9.7_
-  - [~] 15.2 Implement Realtime chat subscription
+  - [-] 15.2 Implement Realtime chat subscription
     - Subscribe to `group:{group_id}:messages` channel (Postgres Changes on `messages`)
     - Append incoming messages to local state; on reconnect re-fetch last 50 messages
     - _Requirements: 9.2, 9.6_
-  - [~] 15.3 Implement chat UI with reactions
+  - [-] 15.3 Implement chat UI with reactions
     - Create `src/features/chat/ChatRoom.tsx` with message list, input box, and emoji reaction bar (👍 ❤️ 😂 🔥 👏)
     - Reactions stored as JSONB in `messages.reactions`; UPDATE via PostgREST
     - Display system messages (join/leave/confirm) in a visually distinct style

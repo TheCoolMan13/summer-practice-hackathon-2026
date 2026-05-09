@@ -3,18 +3,9 @@ import LoginPage from './features/auth/LoginPage'
 import RegisterPage from './features/auth/RegisterPage'
 import AuthGuard from './components/AuthGuard'
 import ProfilePage from './features/profile/ProfilePage'
-
-/**
- * Placeholder — will be replaced by the real FeedPage in task 11.
- */
-function FeedPage() {
-  return (
-    <main style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-      <h1>Home Feed</h1>
-      <p>Welcome! You are logged in.</p>
-    </main>
-  )
-}
+import FeedPage from './features/feed/FeedPage'
+import CreateEventPage from './features/events/CreateEventPage'
+import EventDetailPage from './features/events/EventDetailPage'
 
 /**
  * App
@@ -52,6 +43,22 @@ export default function App() {
           element={
             <AuthGuard message="Log in to view and edit your profile.">
               <ProfilePage />
+            </AuthGuard>
+          }
+        />
+        <Route
+          path="/events/create"
+          element={
+            <AuthGuard message="Log in to create an event.">
+              <CreateEventPage />
+            </AuthGuard>
+          }
+        />
+        <Route
+          path="/events/:eventId"
+          element={
+            <AuthGuard message="Log in to view event details.">
+              <EventDetailPage />
             </AuthGuard>
           }
         />
