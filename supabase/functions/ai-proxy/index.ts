@@ -1,117 +1,234 @@
 // Feature: show-up-2-move
 // Edge Function: ai-proxy
 //
-// Responsibilities (Task 17):
-//   - Proxy AI requests with 3-second timeout
-//   - Return degraded response on failure: { sports: [], error: "service unavailable" }
-//   - Implement AI health check: mark AI unavailable when /health returns non-200 or times out
-//   - Auto-resume on recovery
+// Two modes of operation, picked by the request payload:
 //
-// Requirements: 14.1, 14.2, 14.4
+//  (a) Built-in actions.  Example: `{ action: "extract-interests", bio: "..." }`.
+//      The function runs an LLM (OpenAI) when `OPENAI_API_KEY` is set, and
+//      falls back to a deterministic keyword matcher when it isn't. This
+//      is what the web app uses to auto-generate sports from a user bio.
+//
+//  (b) Legacy proxy mode. Example: `{ endpoint: "/health", method: "GET" }`.
+//      The function forwards the request to the AI microservice at
+//      `AI_BASE_URL`. This keeps existing consumers (aiHealth.ts,
+//      match-users, reengage-users, venue-suggestions) working unchanged.
+//
+// In both modes, every failure collapses to a stable degraded payload so
+// core flows never block on AI. Requirements: 4.1, 4.2, 14.1, 14.2, 14.4.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-/** Timeout in milliseconds for AI microservice calls (Requirement 14.2). */
+// ── Config ──────────────────────────────────────────────────────────────────
+
 const AI_TIMEOUT_MS = 3000
+const OPENAI_MODEL = 'gpt-4o-mini'
 
-/** Health check cache duration in milliseconds (2 seconds). */
-const HEALTH_CHECK_CACHE_MS = 2000
+// Canonical sports the rest of the app understands. The LLM is constrained
+// to return values from this list; the keyword fallback matches them too.
+const KNOWN_SPORTS = [
+  'football', 'basketball', 'tennis', 'volleyball',
+] as const
+type KnownSport = (typeof KNOWN_SPORTS)[number]
 
-/** In-memory health status cache. */
-let aiHealthStatus: {
-  isAvailable: boolean
-  lastChecked: number
-} = {
+// ── Legacy health cache ─────────────────────────────────────────────────────
+
+let aiHealthStatus: { isAvailable: boolean; lastChecked: number } = {
   isAvailable: true,
   lastChecked: 0,
 }
+const HEALTH_CHECK_CACHE_MS = 2000
 
-interface ProxyRequest {
-  endpoint: string // e.g., "/extract-interests", "/profile-compatibility", "/venue-recommendations"
-  method?: string // defaults to POST
-  body?: any
+// ── Shared helpers ──────────────────────────────────────────────────────────
+
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Max-Age': '86400',
 }
 
-interface DegradedResponse {
-  sports?: never[]
-  error: string
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+  })
+}
+
+// ── Built-in action: extract-interests ─────────────────────────────────────
+
+interface ExtractInterestsPayload {
+  action: 'extract-interests'
+  bio?: string
+}
+
+interface ExtractInterestsResponse {
+  sports: string[]
+  source?: 'llm' | 'keyword' | 'empty'
+  error?: string
 }
 
 /**
- * Check AI service health by calling GET /health.
- *
- * @param aiBaseUrl - Base URL of the AI microservice
- * @returns true if AI is healthy (200 response within timeout), false otherwise
+ * Keyword-based sport extractor. Used as a deterministic fallback when the
+ * LLM is unavailable or unconfigured. Matches sport names and common
+ * phrasings ("play basketball", "footballer", "on the tennis court", etc.).
  */
-async function checkAIHealth(aiBaseUrl: string): Promise<boolean> {
+function extractSportsByKeyword(bio: string): KnownSport[] {
+  const text = bio.toLowerCase()
+  const hits = new Set<KnownSport>()
+
+  // Direct mentions.
+  if (/\bfootball(ers?)?\b|\bsoccer\b/.test(text)) hits.add('football')
+  if (/\bbasketball(ers?)?\b|\bhoops?\b/.test(text)) hits.add('basketball')
+  if (/\btennis\b/.test(text)) hits.add('tennis')
+  if (/\bvolleyball\b|\bbeach\s*volley\b/.test(text)) hits.add('volleyball')
+
+  return Array.from(hits)
+}
+
+/**
+ * Call OpenAI's chat completions API and ask for a JSON array of sports
+ * drawn strictly from KNOWN_SPORTS. Returns an empty array on any error
+ * (network, non-200, non-JSON, unknown sport, abort).
+ */
+async function extractSportsWithLLM(bio: string, apiKey: string): Promise<KnownSport[]> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 
+  const allowed = KNOWN_SPORTS.join(', ')
+  const systemPrompt = [
+    'You extract sports a person plays from a short bio.',
+    `Return only sports from this closed list: ${allowed}.`,
+    'Respond with a JSON object: {"sports": ["football", "tennis"]}.',
+    'If none are clearly implied, return {"sports": []}. Do not invent sports.',
+  ].join(' ')
+
   try {
-    const res = await fetch(`${aiBaseUrl}/health`, {
-      method: 'GET',
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
       signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: bio },
+        ],
+      }),
     })
-
     clearTimeout(timeoutId)
 
-    if (res.ok) {
-      console.log('[ai-proxy] AI service health check passed.')
-      return true
-    } else {
-      console.warn(`[ai-proxy] AI service health check failed: ${res.status}`)
-      return false
+    if (!res.ok) {
+      console.warn(`[ai-proxy] OpenAI non-200: ${res.status}`)
+      return []
     }
-  } catch (error) {
+
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>
+    }
+    const content = data.choices?.[0]?.message?.content ?? ''
+    if (!content) return []
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(content)
+    } catch {
+      return []
+    }
+
+    const raw = (parsed as { sports?: unknown })?.sports
+    if (!Array.isArray(raw)) return []
+
+    const allowedSet = new Set<string>(KNOWN_SPORTS)
+    const result: KnownSport[] = []
+    for (const item of raw) {
+      if (typeof item !== 'string') continue
+      const s = item.toLowerCase().trim()
+      if (allowedSet.has(s) && !result.includes(s as KnownSport)) {
+        result.push(s as KnownSport)
+      }
+    }
+    return result
+  } catch (err) {
     clearTimeout(timeoutId)
-    console.warn(
-      `[ai-proxy] AI service health check failed: ${error instanceof Error ? error.message : 'unknown error'}`,
-    )
+    console.warn(`[ai-proxy] OpenAI call failed: ${err instanceof Error ? err.message : 'unknown'}`)
+    return []
+  }
+}
+
+async function handleExtractInterests(
+  payload: ExtractInterestsPayload,
+): Promise<ExtractInterestsResponse> {
+  const bio = (payload.bio ?? '').trim()
+  if (!bio) {
+    return { sports: [], source: 'empty' }
+  }
+
+  const openaiKey = Deno.env.get('OPENAI_API_KEY')
+
+  // Prefer the LLM when configured.
+  if (openaiKey) {
+    const sports = await extractSportsWithLLM(bio, openaiKey)
+    if (sports.length > 0) {
+      return { sports, source: 'llm' }
+    }
+    // LLM returned nothing useful — try the deterministic fallback so the
+    // user still gets something when the bio is unambiguous ("I love tennis").
+    const fallback = extractSportsByKeyword(bio)
+    return fallback.length > 0
+      ? { sports: fallback, source: 'keyword' }
+      : { sports: [], source: 'llm' }
+  }
+
+  // No LLM configured — fall back to keyword matching.
+  const sports = extractSportsByKeyword(bio)
+  return { sports, source: sports.length > 0 ? 'keyword' : 'empty' }
+}
+
+// ── Legacy proxy mode ───────────────────────────────────────────────────────
+
+interface LegacyProxyRequest {
+  endpoint: string
+  method?: string
+  body?: unknown
+}
+
+async function checkAIHealth(aiBaseUrl: string): Promise<boolean> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${aiBaseUrl}/health`, { method: 'GET', signal: controller.signal })
+    clearTimeout(timeoutId)
+    return res.ok
+  } catch {
+    clearTimeout(timeoutId)
     return false
   }
 }
 
-/**
- * Get cached AI health status or perform a fresh health check if cache is stale.
- *
- * @param aiBaseUrl - Base URL of the AI microservice
- * @returns true if AI is available, false otherwise
- */
 async function getAIHealthStatus(aiBaseUrl: string): Promise<boolean> {
   const now = Date.now()
-
-  // Return cached status if fresh
   if (now - aiHealthStatus.lastChecked < HEALTH_CHECK_CACHE_MS) {
     return aiHealthStatus.isAvailable
   }
-
-  // Perform fresh health check
   const isAvailable = await checkAIHealth(aiBaseUrl)
-  aiHealthStatus = {
-    isAvailable,
-    lastChecked: now,
-  }
-
+  aiHealthStatus = { isAvailable, lastChecked: now }
   return isAvailable
 }
 
-/**
- * Proxy a request to the AI microservice with timeout and error handling.
- *
- * @param aiBaseUrl - Base URL of the AI microservice
- * @param request - Proxy request with endpoint, method, and body
- * @returns Response from AI service or degraded response on failure
- */
 async function proxyAIRequest(
   aiBaseUrl: string,
-  request: ProxyRequest,
-): Promise<{ success: boolean; data: any }> {
+  request: LegacyProxyRequest,
+): Promise<{ success: boolean; data: unknown }> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
-
   const method = request.method ?? 'POST'
   const url = `${aiBaseUrl}${request.endpoint}`
-
   try {
     const res = await fetch(url, {
       method,
@@ -119,173 +236,106 @@ async function proxyAIRequest(
       body: request.body ? JSON.stringify(request.body) : undefined,
       signal: controller.signal,
     })
-
     clearTimeout(timeoutId)
-
     if (!res.ok) {
-      console.warn(
-        `[ai-proxy] AI service returned non-200: ${res.status} for ${request.endpoint}. ` +
-        'Returning degraded response.',
-      )
+      console.warn(`[ai-proxy] Non-200 ${res.status} for ${request.endpoint}`)
       return { success: false, data: null }
     }
-
-    const json = await res.json()
-    return { success: true, data: json }
-  } catch (error) {
+    return { success: true, data: await res.json() }
+  } catch (err) {
     clearTimeout(timeoutId)
     console.warn(
-      `[ai-proxy] AI service call failed for ${request.endpoint}: ${error instanceof Error ? error.message : 'unknown error'}. ` +
-      'Returning degraded response.',
+      `[ai-proxy] Proxy call failed for ${request.endpoint}: ${err instanceof Error ? err.message : 'unknown'}`,
     )
     return { success: false, data: null }
   }
 }
 
-/**
- * Generate a degraded response based on the endpoint.
- *
- * @param endpoint - The AI endpoint that failed
- * @returns Degraded response appropriate for the endpoint
- */
-function getDegradedResponse(endpoint: string): any {
-  // Default degraded response for /extract-interests
+function getDegradedResponse(endpoint: string): unknown {
   if (endpoint.includes('extract-interests')) {
-    return {
-      sports: [],
-      error: 'service unavailable',
-    }
+    return { sports: [], error: 'service unavailable' }
   }
-
-  // Degraded response for /profile-compatibility
   if (endpoint.includes('profile-compatibility')) {
-    return {
-      score: 0.5, // neutral compatibility score
-      error: 'service unavailable',
-    }
+    return { score: 0.5, error: 'service unavailable' }
   }
-
-  // Degraded response for /venue-recommendations
   if (endpoint.includes('venue-recommendations')) {
-    return {
-      venues: [],
-      error: 'service unavailable',
-    }
+    return { venues: [], error: 'service unavailable' }
   }
-
-  // Generic degraded response
-  return {
-    error: 'service unavailable',
-  }
+  return { error: 'service unavailable' }
 }
 
-// ---------------------------------------------------------------------------
-// Main handler
-// ---------------------------------------------------------------------------
+// ── Main handler ────────────────────────────────────────────────────────────
+
 Deno.serve(async (req: Request): Promise<Response> => {
-  // Only allow POST
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json' },
-    })
+  // Preflight — browsers send OPTIONS before the real POST.
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS })
   }
 
-  // Verify authentication
+  if (req.method !== 'POST') {
+    return jsonResponse(405, { error: 'Method not allowed' })
+  }
+
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse(401, { error: 'Missing authorization header' })
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')
-
   if (!supabaseUrl || !supabaseAnonKey) {
-    return new Response(
-      JSON.stringify({ error: 'Missing SUPABASE_URL or SUPABASE_ANON_KEY' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
-    )
+    return jsonResponse(500, { error: 'Missing SUPABASE_URL or SUPABASE_ANON_KEY' })
   }
 
-  // Create Supabase client with user's JWT to verify authentication
   const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: {
-      headers: { Authorization: authHeader },
-    },
+    global: { headers: { Authorization: authHeader } },
   })
-
-  // Verify the user is authenticated
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse(401, { error: 'Unauthorized' })
   }
 
-  // Parse request body
-  let body: ProxyRequest
+  let body: unknown
   try {
     body = await req.json()
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
+    return jsonResponse(400, { error: 'Invalid JSON body' })
+  }
+
+  const payload = body as Partial<ExtractInterestsPayload & LegacyProxyRequest>
+
+  // (a) Built-in actions — executed here, not proxied.
+  if (payload.action === 'extract-interests') {
+    try {
+      const response = await handleExtractInterests(payload as ExtractInterestsPayload)
+      return jsonResponse(200, response)
+    } catch (err) {
+      console.warn(`[ai-proxy] extract-interests failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      // Degraded — never fail the user's save flow because of AI.
+      return jsonResponse(200, { sports: [], error: 'service unavailable' })
+    }
+  }
+
+  // (b) Legacy proxy mode.
+  if (!payload.endpoint) {
+    return jsonResponse(400, {
+      error: 'Missing required field: provide either `action` or `endpoint`',
     })
   }
 
-  // Validate required fields
-  if (!body.endpoint) {
-    return new Response(
-      JSON.stringify({ error: 'Missing required field: endpoint' }),
-      { status: 400, headers: { 'Content-Type': 'application/json' } },
-    )
-  }
-
-  // Get AI base URL from environment
   const aiBaseUrl = Deno.env.get('AI_BASE_URL')
-
   if (!aiBaseUrl) {
-    // AI service not configured — return degraded response (Requirement 14.3)
-    console.warn('[ai-proxy] AI_BASE_URL not set. Returning degraded response.')
-    const degradedResponse = getDegradedResponse(body.endpoint)
-    return new Response(JSON.stringify(degradedResponse), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse(200, getDegradedResponse(payload.endpoint))
   }
 
-  // Check AI health status (Requirement 14.1, 14.4)
-  const isHealthy = await getAIHealthStatus(aiBaseUrl)
-
-  if (!isHealthy) {
-    // AI service is unhealthy — return degraded response (Requirement 14.2)
-    console.warn('[ai-proxy] AI service is unhealthy. Returning degraded response.')
-    const degradedResponse = getDegradedResponse(body.endpoint)
-    return new Response(JSON.stringify(degradedResponse), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
+  const healthy = await getAIHealthStatus(aiBaseUrl)
+  if (!healthy) {
+    return jsonResponse(200, getDegradedResponse(payload.endpoint))
   }
 
-  // Proxy the request to the AI service
-  const { success, data } = await proxyAIRequest(aiBaseUrl, body)
-
+  const { success, data } = await proxyAIRequest(aiBaseUrl, payload as LegacyProxyRequest)
   if (!success) {
-    // AI request failed — return degraded response
-    const degradedResponse = getDegradedResponse(body.endpoint)
-    return new Response(JSON.stringify(degradedResponse), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return jsonResponse(200, getDegradedResponse(payload.endpoint))
   }
-
-  // Success — return AI response
-  return new Response(JSON.stringify(data), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  })
+  return jsonResponse(200, data)
 })

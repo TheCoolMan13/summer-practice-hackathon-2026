@@ -86,29 +86,25 @@ export const DEFAULT_PROBE_TIMEOUT_MS = 3_500
 // ─── Default probe implementation ────────────────────────────────────────────
 
 /**
- * Probe AI health by asking `ai-proxy` to forward a `GET /health` request.
+ * Probe AI health by calling the `ai-proxy` built-in `extract-interests`
+ * action with an empty bio. The proxy uses OpenAI when configured, and a
+ * deterministic keyword extractor otherwise — either way a successful
+ * response means the AI feature set is usable.
  *
- * The Edge Function is the single source of truth for AI availability:
- *  - If `AI_BASE_URL` is unset it returns `{ error: 'service unavailable' }`
- *  - If its cached health check failed it returns the same degraded payload
- *  - Otherwise it proxies the live `/health` response through
+ * Returns:
+ *  - `healthy`  — the proxy responded successfully without a
+ *                 `service unavailable` error
+ *  - `degraded` — any error, abort, or explicit `service unavailable`
  *
- * We classify the outcome as:
- *  - `healthy`  — the proxy returned a non-degraded payload
- *  - `degraded` — any error, abort, or `error: 'service unavailable'`
- *
- * This function never throws; errors collapse to `degraded`.
+ * This function never throws; all failures collapse to `degraded`.
  */
 export async function probeAIHealth(
   timeoutMs: number = DEFAULT_PROBE_TIMEOUT_MS,
 ): Promise<AIHealthStatus> {
   try {
-    // Wrap invoke in a Promise.resolve so a synchronous throw (e.g. when the
-    // supabase client is misconfigured) lands in our catch block instead of
-    // escaping upward.
     const invokePromise = Promise.resolve().then(() =>
       supabase.functions.invoke('ai-proxy', {
-        body: { endpoint: '/health', method: 'GET' },
+        body: { action: 'extract-interests', bio: '' },
       }),
     )
 

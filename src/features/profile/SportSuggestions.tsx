@@ -28,12 +28,13 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
   const [loading, setLoading] = useState(false)
   const [degraded, setDegraded] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
+  const [source, setSource] = useState<'llm' | 'keyword' | null>(null)
   const { isDegraded: aiDegraded } = useAIHealth()
 
   const bioIsEmpty = !bio.trim()
 
   async function handleGetSuggestions() {
-    setLoading(true); setDegraded(false); setSuggestions([]); setSelected(new Set()); setConfirmed(false)
+    setLoading(true); setDegraded(false); setSuggestions([]); setSelected(new Set()); setConfirmed(false); setSource(null)
     if (aiDegraded) { setDegraded(true); setLoading(false); return }
     try {
       const { data, error } = await supabase.functions.invoke('ai-proxy', {
@@ -48,6 +49,9 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
       )
       if (sports.length === 0) { setDegraded(true); return }
       setSuggestions(sports)
+      if (data?.source === 'llm' || data?.source === 'keyword') {
+        setSource(data.source)
+      }
     } catch {
       setDegraded(true)
     } finally {
@@ -121,7 +125,12 @@ export default function SportSuggestions({ userId: _userId, bio, onConfirm }: Sp
 
       {suggestions.length > 0 && (
         <div>
-          <p style={styles.chipPrompt}>Select the sports you'd like to add, then confirm:</p>
+          <p style={styles.chipPrompt}>
+            Select the sports you'd like to add, then confirm:
+            {source === 'keyword' && (
+              <span style={styles.sourceBadge}> · matched by keyword</span>
+            )}
+          </p>
           <div style={styles.chipsRow} role="group" aria-label="Suggested sports">
             {suggestions.map((sport) => {
               const active = selected.has(sport)
@@ -256,5 +265,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12, fontWeight: 600,
     cursor: 'pointer', textDecoration: 'underline',
     padding: 0,
+  },
+  sourceBadge: {
+    color: colors.ink[500],
+    fontSize: 12,
+    fontWeight: 500,
   },
 }

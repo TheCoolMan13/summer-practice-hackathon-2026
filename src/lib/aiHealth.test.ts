@@ -62,7 +62,7 @@ describe('probeAIHealth', () => {
 
   it('returns "healthy" when ai-proxy responds with a non-degraded payload', async () => {
     invokeMock.mockResolvedValueOnce({
-      data: { status: 'ok', provider: 'ollama' },
+      data: { sports: [], source: 'empty' },
       error: null,
     })
 
@@ -70,7 +70,7 @@ describe('probeAIHealth', () => {
     expect(status).toBe('healthy')
     expect(invokeMock).toHaveBeenCalledTimes(1)
     expect(invokeMock).toHaveBeenCalledWith('ai-proxy', {
-      body: { endpoint: '/health', method: 'GET' },
+      body: { action: 'extract-interests', bio: '' },
     })
   })
 
