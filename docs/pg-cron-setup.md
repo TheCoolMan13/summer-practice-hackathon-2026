@@ -4,16 +4,18 @@ This guide explains how to set up and verify the pg_cron schedules for the ShowU
 
 ## Overview
 
-The platform uses pg_cron to automatically run two Edge Functions on a schedule:
+The platform uses pg_cron to automatically run Edge Functions on a schedule:
 
 1. **expire-availability**: Runs every 1 minute to expire old availability declarations
 2. **match-users**: Runs every 5 minutes to match available users into groups
+3. **reassign-captain**: Runs every 15 minutes to check for inactive captains
+4. **send-reminders**: Runs every hour to send reminder notifications for upcoming events
 
 ## Prerequisites
 
 - Supabase project is created and accessible
 - Database migrations have been applied (including `20240001000006_pg_cron_schedules.sql`)
-- Edge Functions are deployed (`match-users` and `expire-availability`)
+- Edge Functions are deployed (`match-users`, `expire-availability`, `reassign-captain`, `send-reminders`)
 
 ## Setup Steps
 
@@ -69,7 +71,7 @@ SELECT
   schedule,
   active
 FROM cron.job 
-WHERE jobname IN ('match-users-every-5-minutes', 'expire-availability-every-minute');
+WHERE jobname IN ('match-users-every-5-minutes', 'expire-availability-every-minute', 'reassign-captain-every-15-minutes', 'send-reminders-every-hour');
 ```
 
 Expected output:
@@ -78,15 +80,19 @@ jobid | jobname                           | schedule      | active
 ------|-----------------------------------|---------------|-------
 1     | expire-availability-every-minute  | * * * * *     | t
 2     | match-users-every-5-minutes       | */5 * * * *   | t
+3     | reassign-captain-every-15-minutes | */15 * * * *  | t
+4     | send-reminders-every-hour         | 0 * * * *     | t
 ```
 
 ### Step 4: Verify Edge Functions are Deployed
 
 1. Go to Supabase dashboard
 2. Navigate to: **Edge Functions**
-3. Verify both functions are listed:
+3. Verify all functions are listed:
    - `match-users`
    - `expire-availability`
+   - `reassign-captain`
+   - `send-reminders`
 
 If not deployed, deploy them:
 
@@ -96,6 +102,12 @@ supabase functions deploy match-users
 
 # Deploy expire-availability
 supabase functions deploy expire-availability
+
+# Deploy reassign-captain
+supabase functions deploy reassign-captain
+
+# Deploy send-reminders
+supabase functions deploy send-reminders
 ```
 
 ### Step 5: Test Manual Execution
@@ -114,6 +126,18 @@ curl -X POST https://hdmqkrkzxnqvchgccthl.supabase.co/functions/v1/expire-availa
   -H "Authorization: Bearer <service-role-key>" \
   -H "Content-Type: application/json" \
   -d '{}'
+
+# Test reassign-captain
+curl -X POST https://hdmqkrkzxnqvchgccthl.supabase.co/functions/v1/reassign-captain \
+  -H "Authorization: Bearer <service-role-key>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+# Test send-reminders
+curl -X POST https://hdmqkrkzxnqvchgccthl.supabase.co/functions/v1/send-reminders \
+  -H "Authorization: Bearer <service-role-key>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 Expected response (match-users):
@@ -122,6 +146,14 @@ Expected response (match-users):
   "formedGroups": [],
   "queuedUsers": [],
   "createdGroupIds": []
+}
+```
+
+Expected response (send-reminders):
+```json
+{
+  "message": "No upcoming events within the next hour",
+  "remindersSent": 0
 }
 ```
 
@@ -241,6 +273,27 @@ SELECT COUNT(*) FROM profiles WHERE location_lat IS NOT NULL AND location_lng IS
 - **Execution time**: Target ≤ 1 second
 - **Dependencies**:
   - `availability` table with expired records
+
+### reassign-captain Schedule
+
+- **Frequency**: Every 15 minutes (`*/15 * * * *`)
+- **Purpose**: Check for inactive captains (>2h without confirmation) and reassign
+- **Requirements**: 8.4, 16.4
+- **Execution time**: Target ≤ 3 seconds
+- **Dependencies**:
+  - `groups` table with pending groups
+  - `captain_history` table for weighted selection
+
+### send-reminders Schedule
+
+- **Frequency**: Every hour (`0 * * * *`)
+- **Purpose**: Send reminder notifications for events starting within 1 hour
+- **Requirements**: 12.5
+- **Execution time**: Target ≤ 5 seconds
+- **Dependencies**:
+  - `events` table with upcoming events
+  - `event_participants` table with active participants
+  - `notifications` table for reminder delivery
 
 ## Monitoring Best Practices
 

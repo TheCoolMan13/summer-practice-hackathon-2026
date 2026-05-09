@@ -73,6 +73,28 @@ SELECT cron.schedule(
 );
 
 -- ============================================================
+-- Schedule: reengage-users
+-- Runs daily at 10:00 AM UTC to identify inactive users (≥5 days without
+-- availability declaration) and send personalized re-engagement reminders.
+-- Requirements: 15.1, 15.2, 15.3, 15.4
+-- ============================================================
+SELECT cron.schedule(
+  'reengage-users-daily',
+  '0 10 * * *',  -- Daily at 10:00 AM UTC
+  $$
+  SELECT
+    net.http_post(
+      url := current_setting('app.settings.supabase_url', true) || '/functions/v1/reengage-users',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key', true)
+      ),
+      body := '{}'::jsonb
+    ) AS request_id;
+  $$
+);
+
+-- ============================================================
 -- Configuration Instructions
 -- ============================================================
 -- The pg_cron schedules require the following database settings:
@@ -89,3 +111,25 @@ SELECT cron.schedule(
 --   - Local: Output of `supabase status` or `.env` file
 --   - Production: Supabase dashboard → Settings → API → service_role key
 -- ============================================================
+
+-- ============================================================
+-- Schedule: send-reminders
+-- Runs every hour to send reminder notifications for events
+-- starting within the next hour.
+-- Requirement: 12.5
+-- ============================================================
+SELECT cron.schedule(
+  'send-reminders-every-hour',
+  '0 * * * *',  -- Every hour at minute 0
+  $$
+  SELECT
+    net.http_post(
+      url := current_setting('app.settings.supabase_url', true) || '/functions/v1/send-reminders',
+      headers := jsonb_build_object(
+        'Content-Type', 'application/json',
+        'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key', true)
+      ),
+      body := '{}'::jsonb
+    ) AS request_id;
+  $$
+);

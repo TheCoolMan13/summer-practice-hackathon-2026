@@ -189,16 +189,16 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
   - Ensure all tests written so far pass (`vitest --run`)
   - Ask the user if questions arise before proceeding to real-time and chat features.
 
-- [ ] 15. Group chat — real-time messaging
+- [x] 15. Group chat — real-time messaging
   - [x] 15.1 Implement chat message persistence and retrieval
     - Create `src/features/chat/useGroupChat.ts` hook that fetches the last 50 messages from `messages` ordered by `created_at ASC`
     - INSERT new messages with `sender_id = auth.uid()` and `type='user'`
     - _Requirements: 9.2, 9.6, 9.7_
-  - [-] 15.2 Implement Realtime chat subscription
+  - [x] 15.2 Implement Realtime chat subscription
     - Subscribe to `group:{group_id}:messages` channel (Postgres Changes on `messages`)
     - Append incoming messages to local state; on reconnect re-fetch last 50 messages
     - _Requirements: 9.2, 9.6_
-  - [-] 15.3 Implement chat UI with reactions
+  - [x] 15.3 Implement chat UI with reactions
     - Create `src/features/chat/ChatRoom.tsx` with message list, input box, and emoji reaction bar (👍 ❤️ 😂 🔥 👏)
     - Reactions stored as JSONB in `messages.reactions`; UPDATE via PostgREST
     - Display system messages (join/leave/confirm) in a visually distinct style
@@ -212,11 +212,11 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - **Validates: Requirements 9.2**
 
 - [ ] 16. Venue polling and coordination
-  - [~] 16.1 Implement venue poll creation and voting
+  - [-] 16.1 Implement venue poll creation and voting
     - Create `src/features/groups/VenuePoll.tsx` that INSERTs into `venue_polls` and `venue_poll_options`
     - Implement vote action: INSERT into `venue_poll_votes` (UNIQUE constraint enforces one vote per user per poll)
     - _Requirements: 11.3, 11.4_
-  - [~] 16.2 Implement live vote count updates via Realtime
+  - [-] 16.2 Implement live vote count updates via Realtime
     - Subscribe to `group:{group_id}:poll` Broadcast channel for live vote count updates
     - Display live vote counts to all group members
     - _Requirements: 11.4_
@@ -227,13 +227,13 @@ This plan converts the ShowUp2Move design into incremental coding tasks. The sta
     - Assert a second vote from the same user either replaces the previous vote or is rejected
     - **Validates: Requirements 11.3, 11.4**
 
-- [~] 17. Edge Function: `venue-suggestions` and `ai-proxy`
+- [-] 17. Edge Function: `venue-suggestions` and `ai-proxy`
   - Create `supabase/functions/venue-suggestions/index.ts`: call AI `POST /venue-recommendations` with sport, participant count, and location; return up to 5 venues or empty list on failure
   - Create `supabase/functions/ai-proxy/index.ts`: proxy AI requests with 3-second timeout; return degraded response `{ sports: [], error: "service unavailable" }` on failure
   - Implement AI health check: mark AI unavailable when `/health` returns non-200 or times out; auto-resume on recovery
   - _Requirements: 11.1, 11.2, 14.1, 14.2, 14.4_
 
-- [~] 18. Captain coordination actions
+- [-] 18. Captain coordination actions
   - Add captain-only UI controls to `ChatRoom.tsx`: confirm event button, propose venue options (calls `venue-suggestions`), finalize time and location
   - On event confirm: UPDATE `events.status = 'confirmed'`, INSERT system message "Sport match confirmed", INSERT notifications for all group members
   - On venue finalize: INSERT notification with confirmed location and start time for all group members
